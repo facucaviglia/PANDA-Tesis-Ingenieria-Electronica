@@ -1,0 +1,10 @@
+.pio/
+.vscode/*
+!.vscode/extensions.json
+
+# Credenciales locales (Wi-Fi del hotspot, servidor). Nunca se versionan.
+include/secrets.h
+
+# Python
+__pycache__/
+*.pyc
