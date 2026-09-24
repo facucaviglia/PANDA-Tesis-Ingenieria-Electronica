@@ -1,0 +1,409 @@
+================================================================================
+PANDA · FIRMWARE DE LOS NODOS (T-BEAM SUPREME)
+DOCUMENTO DE CONTEXTO PARA RETOMAR EL TRABAJO EN UN CHAT NUEVO
+Estado al 24 de septiembre de 2026
+================================================================================
+
+0. INSTRUCCIONES PARA LA IA QUE LEA ESTE ARCHIVO
+--------------------------------------------------------------------------------
+Este archivo complementa a "PANDA contexto sept.txt" (el contexto general de la
+tesis: problema, arquitectura, normativa, DFMEA, economía). Ese sigue siendo la
+fuente para todo lo que no sea firmware. Este es la fuente para el firmware.
+
+Cómo hablarle a Facu (reglas duras, iguales al documento general):
+- Español rioplatense informal, directo y conciso. Nunca decir "che".
+- Nunca usar guiones largos ni punto y coma, tampoco en código comentado,
+  documentos o láminas.
+- Ecuaciones en LaTeX en el chat.
+- Antes de generar código o archivos grandes, explicar qué se va a hacer.
+- Si algo está mal decirlo sin vueltas, aunque el error sea de la IA.
+- Facu autorizó commitear sin preguntar. Pushear o borrar ramas en GitHub,
+  preguntar antes.
+
+Qué NO reabrir (decisiones tomadas con Facu):
+- Prototipo con LoRa en 915 MHz. La presentación y el producto siguen con el
+  Raveon UHF licenciado. Se lo ve como "simular con formas distintas".
+- Beacon a 10 Hz, 35 bytes, AES-CTR + CMAC, TDMA de 100 ms alineado al 1PPS.
+- GNSS por UBX NAV-PVT (SparkFun v3), no TinyGPSPlus.
+- La fase 4 (IMU) quedó EN PAUSA A PROPÓSITO hasta probar en placa y tener
+  datos del viaje 1. No arrancarla sin que Facu lo pida.
+
+Qué NO asumir:
+- NADA fue probado en una placa todavía. Todo compila y la lógica se verificó
+  con modelos en Python, pero el primer arranque real puede pedir ajustes.
+- Hoy tienen UNA sola T-Beam. La segunda está por llegar.
+
+
+1. QUÉ ES Y DÓNDE ESTÁ
+--------------------------------------------------------------------------------
+Firmware PlatformIO para los nodos del prototipo PANDA sobre LILYGO T-Beam
+Supreme (V3), 915 MHz, ESP32-S3 + SX1262 + u-blox MAX-M10S.
+Un solo código con tres roles, elegidos al compilar:
+  registrador   caja negra: GNSS + IMU a microSD y posición en vivo a Traccar
+  tren          todo lo anterior + beacon LoRa cifrado a 10 Hz en su ranura TDMA
+  cruce         recibe y valida beacons, decide el estado del cruce, maneja
+                salidas físicas (relés, señal peatonal, sonido)
+
+Repositorio: https://github.com/facucaviglia/PANDA-Tesis-Ingenieria-Electronica
+  - Rama única: main, un solo commit limpio (1ce573c) con las fases 1 a 3.
+  - Carpeta del proyecto: firmware/panda-node (abrir ESA carpeta en VS Code).
+  - Local: D:\ITBA\PANDA-Tesis-Ingenieria-Electronica
+  - README completo en firmware/panda-node/README.md (cableado, CSV, escenarios).
+
+Fases:
+  1 registrador                         HECHA (compila, sin probar en placa)
+  2 enlace tren y cruce                 HECHA (compila, sin probar en placa)
+  3 lógica de decisión del cruce        HECHA (compila, modelo Python verificado)
+  4 IMU: plausibilidad GNSS, quieto o
+    en marcha, huecos cortos            EN PAUSA hasta tener datos reales
+
+
+2. ENTORNO DE DESARROLLO
+--------------------------------------------------------------------------------
+- PlatformIO: ~/.platformio/penv/Scripts/pio.exe (no está en el PATH).
+  Compilar:  pio run -e tren     |     subir: pio run -e tren -t upload
+- espressif32@6.13.0 (core Arduino 2.0.17), C++17.
+- Librerías fijas: RadioLib 7.7.1, XPowersLib 0.3.3, U8g2 2.36.18,
+  SparkFun u-blox GNSS v3 3.1.15, SensorLib 0.5.0.
+- Placa propia: boards/panda-tbeam-supreme.json (8 MB flash QIO, 8 MB PSRAM
+  QSPI, USB CDC, eventos de Arduino en el core 0).
+- include/secrets.h NO se versiona (Wi-Fi del hotspot, Traccar). Plantilla en
+  include/secrets_example.h.
+- Python del sistema SIN pyserial. El Python de PlatformIO
+  (~/.platformio/penv/Scripts/python.exe) SÍ tiene pyserial.
+- No hay g++ ni gh CLI instalados.
+
+Trampas de herramientas que ya aparecieron (para la IA):
+- En Git Bash, pasar código por heredoc a Python divide las barras invertidas
+  a la mitad: "\\n" llega como salto de línea y "\\0" como byte nulo. Para
+  cambios con barras invertidas usar la herramienta de edición, no scripts.
+- Python en Windows escribe CRLF: usar open(..., newline='').
+- Comillas triples anidadas en scripts de parcheo rompen el script.
+
+
+3. PINOUT REAL VERIFICADO (include/board_pins.h)
+--------------------------------------------------------------------------------
+Fuente: repo oficial LilyGo (utilities.h, LoRaBoards.cpp, hoja de pines) y
+variante tbeam-s3-core de Meshtastic. La wiki de LilyGo NO sirve (otra placa).
+
+  PMU AXP2101 y RTC      Wire1  SDA 42, SCL 41, IRQ 40
+  OLED SH1106, sensores  Wire   SDA 17, SCL 18
+  GNSS MAX-M10S          RX MCU 9, TX MCU 8, PPS 6, wakeup 7
+  SX1262 (HSPI propio)   SCK 12, MISO 13, MOSI 11, CS 10, RST 5, DIO1 1, BUSY 4
+                         TCXO 1,8 V por DIO3, DIO2 como switch de antena
+  SPI compartido (FSPI)  SCK 36, MISO 37, MOSI 35, SD CS 47, IMU CS 34, IMU INT 33
+  Botón BOOT             GPIO 0
+  Rieles PMU             DCDC1 ESP32 (no tocar), ALDO1/2 sensores e IMU,
+                         ALDO3 radio, ALDO4 GNSS, BLDO1 microSD, BLDO2 header
+  El GPIO 42 NO es un LED. No hay LED de usuario: se usa el LED de carga de la
+  PMU (normal, 1 Hz advertencia, 4 Hz falla fatal, lo genera la PMU por HW).
+
+Salidas y entrada del nodo cruce (header derecho, libres: 2, 3, 21, 38, 39,
+45, 46, 48. Se evitan 45 y 46 por ser pines de arranque):
+  GPIO 21  relé "PANDA libre"      energizado = PANDA ve vía libre
+  GPIO 38  relé "PANDA operativo"  energizado = nodo sano
+  GPIO 39  señal peatonal NO SEGURO (LED rojo)
+  GPIO 48  sonido (PWM 2,5 kHz)
+  GPIO 2   entrada circuito de vía por opto: conduce = LIBRE, abierto = OCUPADA
+  Cada salida con pull-down de 10 kΩ y transistor u opto. Estado seguro = bajo.
+
+
+4. QUÉ HACE CADA ROL HOY
+--------------------------------------------------------------------------------
+Común a todos:
+- PMU: enciende rieles, carga de 18650 a 500 mA, lectura de batería.
+- GNSS: detecta baudios, pasa a 460800, solo UBX, 10 Hz, modelo automotriz,
+  NAV-PVT por callback, reintenta si se cae. 1PPS por interrupción.
+- Reloj GPS local: ancla PPS (µs), gruesa por NAV-PVT, o de la PC (banco).
+- microSD: carpeta PANDA_NNNN por encendido, CSV con base de tiempo t_us común.
+  Se puede insertar con la placa encendida (reintenta cada 5 s).
+- Telemetría a Traccar por el hotspot del iPhone (OsmAnd HTTP, 1 Hz), aislada
+  en el core 0 (R-31).
+- OLED a 5 Hz, consola serie con resumen cada 1 s, botón BOOT:
+  corto = MARCA con tiempo exacto, largo (1,5 s) = siguiente perfil de radio.
+- Consola por líneas (tarea propia): h ayuda, i info, m marca, p perfil,
+  s barrido de canales, w potencia (tren), c/C guardar/borrar posición del
+  cruce, v simular circuito de vía, x silencio (cruce).
+
+Registrador: lo anterior + IMU QMI8658 por FIFO (~224 Hz) + detector simple de
+quieto/en marcha. La radio se verifica y queda dormida.
+
+Tren:
+- Beacon de 35 bytes a 10 Hz en su ranura TDMA. Sin tiempo GPS igual
+  transmite a 10 Hz con reloj local (marcado "sin tiempo", solo para banco).
+- Potencia BANCO 2 dBm (por defecto) o CAMPO 22 dBm con "w". Queda guardada.
+- tx.csv con antigüedad del fix al transmitir, ranura y duración en el aire.
+
+Cruce:
+- Recepción continua. Valida en orden: CRC, formato, CMAC, contador
+  anti-repetición, frescura (-0,5 s a 2 s). Resultados: OK, SIN_TIEMPO, CRC,
+  FORMATO, CMAC, REPETIDO, VIEJO, FUTURO.
+- Mide RSSI, SNR, error de frecuencia, pérdida (PER en 5 s), antigüedad del
+  dato (E-6 medida directa) y distancia entre nodos.
+- Lógica de decisión (sección 6), salidas físicas, vigilancia.
+- rx.csv y decision.csv. Sube a Traccar su posición y el tren recibido por
+  radio con el estado del cruce.
+- Acepta beacons y tiempo por USB desde el simulador de la PC.
+
+
+5. ENLACE, BEACON Y SEGURIDAD
+--------------------------------------------------------------------------------
+LoRa en 925,0 MHz, header implícito, sync word privada 0x12, preámbulo 8,
+CRC 2 bytes, límite de corriente 140 mA. Perfiles (botón largo o "p", hay que
+cambiarlo en LOS DOS nodos):
+  0  SF7/500 CR4/5   18 ms de aire, ~-117 dBm, 5 ranuras  (por defecto)
+  1  SF6/500 CR4/5   10 ms, ~-114 dBm, 8 ranuras
+  2  SF7/250 CR4/5   36 ms, ~-121 dBm, 2 ranuras
+  3  SF7/500 CR4/8   26 ms, corrige desvanecimiento, 3 ranuras
+
+Beacon (little-endian):
+  0 verTipo | 1-2 nodeId | 3-6 counter        en claro
+  7 flags | 8-11 itowMs | 12-15 latE7 | 16-19 lonE7 | 20-21 speedCms |
+  22-23 headingCdeg | 24-25 hAccCm | 26 numSv   cifrado AES-128-CTR
+  27-34 CMAC truncado (sobre bytes 0 a 26)
+  flags: 1 fix, 2 tiempo GPS, 4 PPS, 8 quieto, 16 IMU ok, 32 plausibilidad
+  (fase 4), 64 estimado (fase 4).
+- El mbedTLS del core no trae CMAC: se implementó RFC 4493 propio.
+- Autotest en cada arranque (FIPS-197, RFC 4493, NIST SP 800-38A) + beacon de
+  referencia idéntico byte a byte al de la PC. Si falla, el nodo no arranca.
+- Contador reservado en bloques de 65536 en NVS: nunca se repite.
+- CLAVES DE PROTOTIPO en config.h, públicas en el repo. No dan seguridad real.
+
+TDMA: trama de 100 ms desde cada época GNSS. Primera ranura a 50 ms, guarda
+2 ms, ranura = aire + guarda redondeado al ms, ranura propia = id módulo N.
+El tren duerme y espera activo los últimos 1,5 ms (error de µs).
+
+
+6. LÓGICA DEL CRUCE (fase 3)
+--------------------------------------------------------------------------------
+Estados: INICIANDO (3 s), APAGADO, NO SEGURO, FALLA.
+NO SEGURO si pasa CUALQUIERA (cierre en OR), se apaga cuando no pasa NINGUNA:
+  1. ETA mínimo de algún tren <= 25 s (E-8b)
+  2. tren a menos de 280 m (250 m de formación + 30 de margen)
+  3. SIN DATOS: tren que pudo haber entrado en zona de alerta durante su
+     silencio (ETA mínimo del último dato menos tiempo en silencio <= 25 s)
+     o que estaba alertando y se calló más de 1 s (E-9)
+  4. tren que se escucha sin posición o con dato no verificable
+  5. circuito de vía ocupado
+FALLA si la tarea de radio no responde, no hay tiempo GPS propio por 5 s o no
+hay posición del cruce.
+
+ETA mínimo: menor tiempo en que el tren podría llegar acelerando al máximo con
+perfil de tracción real: 1,0 m/s² hasta 40 km/h, luego potencia constante
+(a = a0·vk/v), tope 120 km/h. Se resuelve por bisección.
+  detenido 290 m | 40 km/h 489 m (44 s) | 60 km/h 583 m (35 s) |
+  100 km/h 792 m (28,5 s) | 120 km/h 833 m (25,0 s)
+Un tren detenido a más de 290 m no bloquea el cruce (ganancia de eficiencia).
+La posición del tren se proyecta al instante actual con la antigüedad medida.
+Distancia en línea recta (en curva da menos: error del lado seguro).
+
+Liberación de SIN DATOS: vuelven datos válidos, o el circuito de vía se ocupa y
+se libera durante el silencio, o a los 120 s (último recurso). Un tren que se
+alejaba y se calla se olvida a los 10 s. Apagar la alerta pide 3 s seguidos
+fuera de peligro. Paso detectado por mínimo de distancia (evento PASO).
+
+Salidas por estado:
+  APAGADO    señal apagada, PANDA libre ON, PANDA operativo ON, sin sonido
+  NO SEGURO  señal ON, PANDA libre OFF (pedido de cierre), operativo ON, sonido
+  FALLA      señal ON, libre OFF, operativo OFF (la barrera ignora a PANDA)
+Barrera de referencia (se calcula y registra, en el producto vive en el
+controlador): con PANDA operativo baja si PANDA pide cierre O vía ocupada. Sin
+PANDA operativo baja si vía ocupada (comportamiento actual).
+Métrica de validación: evento "vía ocupada con PANDA en vía libre".
+
+Posición del cruce (prioridad): PC (simulador, RAM) > guardada con "c"
+(promedio 60 s de GNSS, mínimo 10 s) > config.h > promedio en vivo (5 s).
+Circuito de vía físico DESACTIVADO por defecto (kTrackCircuitEnabled = false),
+se simula con "v". Activar recién con el opto cableado.
+Vigilancia: timer en core 0 fuerza estado seguro a los 300 ms sin refresco,
+watchdog de tareas reinicia a los 5 s. Falta el TPL5010 externo.
+
+Parámetros en include/config.h, namespace cfg::crossing. Si se cambian, cambiar
+también tools/modelo_cruce.py (mismo valor en los dos).
+
+
+7. ARCHIVOS EN LA MICROSD
+--------------------------------------------------------------------------------
+PANDA_NNNN/  (t_us = µs desde el arranque de esa placa, común a todos)
+  gnss.csv      NAV-PVT a 10 Hz (itow, UTC, lat/lon 7 decimales, velocidad,
+                rumbo, precisiones)
+  imu.csv       ~224 Hz, ejes del chip sin rotar (no se graba en el cruce)
+  events.csv    PPS, MARCA (valor = itow), NOTA (1 arranque, 2 GNSS ok, 3 GNSS
+                perdido, 4 IMU ok, 5/6 Wi-Fi, 7 perfil, 8 potencia, 9 contador,
+                10 cambio de estado, 11 tren nuevo, 12 tren olvidado, 13 PASO,
+                14 circuito de vía, 15 vía sin PANDA, 16 liberación, 17
+                referencia guardada, 18 vigilante)
+  tx.csv        tren: un renglón por beacon
+  rx.csv        cruce: un renglón por paquete (origen RADIO o USB)
+  decision.csv  cruce: estado, motivo, fase, distancia, ETA cv y mínimo, salidas
+Una hora de viaje del tren ocupa unos 50 MB.
+
+
+8. HERRAMIENTAS DE PC (firmware/panda-node/tools)
+--------------------------------------------------------------------------------
+verify_crypto.py   Python puro. AES, CMAC y CTR contra vectores oficiales y
+                   beacon de ida y vuelta. Es el decodificador de referencia.
+sim_trenes.py      Manda beacons reales por USB al nodo cruce. Escenarios:
+                   rapido, lento, detenido, perdida, silencio, dos, repeticion,
+                   cmac, sin_posicion, via. "--seco" corre sin placa y muestra
+                   la secuencia de estados esperada.
+modelo_cruce.py    Modelo de referencia de la lógica del cruce (mismas reglas
+                   que crossing.cpp).
+Resultados esperados (modelo): rápido alerta a 792 m y apaga 13 s después del
+paso. Detenido a 500 m NO alerta y al arrancar alerta a 401 m. Pérdida de
+enlace a 900 m da SIN DATOS a los 3,3 s de silencio. Repetición y CMAC falso
+no cambian el estado.
+
+
+9. LO QUE ESTÁ VERIFICADO Y LO QUE NO
+--------------------------------------------------------------------------------
+Verificado:
+- Los tres roles compilan sin errores ni advertencias (RAM ~11 %, flash ~17 %).
+- Criptografía contra vectores oficiales en la PC.
+- Los 10 escenarios del simulador terminan y el modelo da lo esperado.
+No verificado (primer contacto con la placa):
+- Que el MAX-M10S sostenga 10 Hz con todas las constelaciones (si da 5 o 6 Hz,
+  sacar alguna constelación).
+- Que el ancla PPS funcione (el 1PPS de fábrica tiene que estar alineado).
+- FIFO de la IMU sobre el SPI compartido con la SD.
+- Tiempos reales de TDMA, TX y recepción continua.
+- Alcance real, efecto de la carrocería del tren y del GNSS adentro del vagón.
+- Hotspot del iPhone 13 con "Maximizar compatibilidad".
+
+
+10. PENDIENTES Y PREGUNTAS ABIERTAS
+--------------------------------------------------------------------------------
+- Fase 4 (IMU) en pausa hasta tener datos del viaje 1.
+- Watchdog externo TPL5010 (DFMEA), doble cadena de LED con shunt al ADC
+  (GPIO 3 queda libre para eso).
+- Maqueta de barrera y su controlador (recibe los dos relés + circuito de vía).
+- ENACOM: si 902-928 MHz exige 500 kHz o más para potencia alta en canal
+  fijo. LoRa 500 kHz probablemente cumple. Verificar antes de usar 22 dBm en
+  campo.
+- Poner cfg::sim::kAllowInjection y kAllowPcTime en false en un nodo que no
+  sea de banco.
+- Traccar demo es temporal: a futuro Traccar propio.
+- Contar en el Hito 3 la decisión del segundo contacto "PANDA operativo" (sin
+  él, un PANDA muerto con apertura en AND dejaría la barrera baja siempre).
+
+
+================================================================================
+11. PASO A PASO PARA PROBAR CON LAS DOS T-BEAM
+================================================================================
+
+11.1 Preparación (una sola vez)
+-------------------------------
+[ ] Dos T-Beam, cada una con su ANTENA DE 915 MHz ROSCADA. Nunca encender un
+    nodo tren sin antena: transmite apenas arranca.
+[ ] Dos microSD FAT32 (4 a 32 GB) y dos 18650 sin protección de punta plana
+    (o power bank por USB-C).
+[ ] Etiquetar las placas: "TREN" y "CRUCE".
+[ ] En include/secrets.h: WIFI_SSID (nombre del iPhone) y WIFI_PASSWORD.
+[ ] iPhone: Ajustes > Compartir Internet > Permitir a otros conectarse y
+    Maximizar compatibilidad.
+[ ] demo.traccar.org: crear cuenta y dar de alta los dispositivos
+    panda-itba-tren, panda-itba-tren-lora y panda-itba-cruce. App Traccar
+    Manager en el celular con servidor https://demo.traccar.org.
+[ ] Sincronizar la hora de la PC (Configuración > Hora e idioma).
+
+11.2 Cargar el firmware
+-----------------------
+1. VS Code > abrir la carpeta firmware/panda-node.
+2. Barra de PlatformIO abajo: elegir env:cruce. Conectar la placa CRUCE por
+   USB-C y tocar Upload (flecha). Si no la detecta: mantener BOOT, tocar RST,
+   soltar BOOT y subir de nuevo.
+3. Repetir con env:tren en la placa TREN.
+4. Abrir el Serial Monitor (115200) en cada una y escribir "i" + Enter: tiene
+   que mostrar rol, perfil, potencia y (en el tren) nodo y ranura.
+   Lo primero que tiene que aparecer al arrancar: PMU ok, AES/CMAC ok,
+   GNSS ok 10Hz, perfil de radio, Listo. Si dice FALLA, anotar qué.
+
+11.3 Prueba 1: enlace en banco, bajo techo (sin GPS)
+----------------------------------------------------
+1. Placas a más de 1 m. Encender primero el CRUCE, después el TREN.
+2. Tren: pantalla "TX nnn SIN SINC", el contador sube 10 por segundo.
+3. Cruce: la consola muestra "sint" subiendo 10 por segundo y RSSI entre -30
+   y -45 dBm. La pantalla dice FALLA "sin tiempo GPS": ES CORRECTO. Sin tiempo
+   GPS el cruce no puede verificar nada y se declara no operativo.
+4. Anotar RSSI y SNR. Si el RSSI está muy bajo, revisar antenas.
+5. Barrido: en el CRUCE escribir "s" y copiar la tabla de ruido por canal.
+
+11.4 Prueba 2: con GPS (al lado de una ventana o afuera)
+--------------------------------------------------------
+1. Esperar fix en las dos (hasta 1 min en frío). La consola tiene que llegar
+   a "GNSS on fix3 ... 10.0Hz t:PPS" y el error de PPS en pocos µs.
+2. Tren: "TX nnn r1/5" (una ranura) y "e" con la antigüedad del fix al
+   transmitir, esperable 50 a 150 ms.
+3. Cruce: guardar la posición con "c" (después de 10 s de fix).
+4. Con las dos placas juntas el cruce va a mostrar NO SEGURO "tren en zona":
+   ES CORRECTO, el tren está a 0 m del cruce. La consola muestra "edad" (E-6
+   medido), PER y la distancia.
+5. Verificar en Traccar que aparezcan panda-itba-tren, panda-itba-tren-lora
+   y panda-itba-cruce.
+
+11.5 Prueba 3: fallas inducidas (con GPS, placas juntas)
+--------------------------------------------------------
+a) Apagar el TREN (botón PWR 6 s o sacar la batería, NUNCA la antena):
+   el cruce pasa a SIN DATOS en ~1 s y queda NO SEGURO. Se libera con "v" dos
+   veces en el cruce (vía ocupada y libre) o a los 120 s.
+b) Cambiar el perfil solo en el TREN (botón largo): el cruce deja de recibir
+   y pasa a SIN DATOS. Cambiar el perfil del CRUCE al mismo: vuelve.
+c) "v" en el cruce sin tren: NO SEGURO por "via ocupada".
+d) Con el cruce conectado a la PC, correr el simulador en los escenarios
+   repeticion y cmac: los paquetes falsos se rechazan sin cambiar el estado.
+e) Revisar en la consola los contadores: crc, mac, rep, vie.
+
+11.6 Prueba 4: la lógica con el simulador (una placa alcanza)
+------------------------------------------------------------
+1. Cruce conectado a la PC, monitor serie CERRADO.
+2. ~/.platformio/penv/Scripts/python.exe tools/sim_trenes.py --puerto COMx --escenario rapido
+3. Comparar con lo que da:  python tools/sim_trenes.py --seco --escenario rapido
+4. Repetir con detenido, perdida, silencio, dos, sin_posicion, via.
+
+11.7 Prueba 5: alcance en la calle (auto o caminando)
+-----------------------------------------------------
+1. CRUCE fijo en un punto alto (trípode, placa arriba y no abajo con cable),
+   con su hotspot. Dejarlo 1 min quieto y guardar posición con "c".
+2. TREN en el auto (o caminando) con otro celular de hotspot. Potencia CAMPO
+   con "w" en el tren (22 dBm, ver ENACOM en sección 10).
+3. Alejarse por una calle recta hasta perder el enlace y volver.
+4. Mirar en Traccar los dos puntos: panda-itba-tren (GNSS propio) y
+   panda-itba-tren-lora (lo que llegó al cruce). Donde se congela el segundo,
+   ahí se cortó el enlace.
+5. Repetir con los perfiles 0, 1, 2 y 3 (cambiar en los DOS).
+6. Usar el botón en el cruce para marcar cuando pasa el auto: después se
+   compara el ETA predicho con el paso real.
+
+11.8 Prueba 6: viaje en tren
+----------------------------
+- TREN como pasajero, pegado a la ventanilla con cinta (quieto respecto del
+  tren), del lado con más cielo. No sacar nada por fuera ni fijar nada al tren.
+- CRUCE en la vereda junto a un paso a nivel con recta larga, fuera del
+  alambrado, SIN tocar ni conectarse a la barrera ni a las señales.
+- Llevar nota del ITBA explicando el ensayo académico.
+- Marcar con el botón en el cruce el paso real de cada tren.
+
+11.9 Qué traer para analizar con Claude
+---------------------------------------
+- Las carpetas PANDA_NNNN de las dos microSD (sesión de cada prueba).
+- La salida de la consola de los primeros 30 s de cada placa.
+- Anotaciones: hora, lugar, perfil usado, potencia, dónde estaba cada placa.
+- Si algo falló: foto de la pantalla y qué se estaba haciendo.
+
+11.10 Problemas comunes
+-----------------------
+No sube el firmware        BOOT + RST + soltar BOOT. Probar otro cable USB-C.
+Pantalla FALLA "sin
+tiempo GPS"                Normal bajo techo. Acercar a la ventana o salir.
+GNSS a 5-6 Hz en vez de 10 Sacar una constelación (avisar a Claude).
+No se conecta al Wi-Fi     "Maximizar compatibilidad" en el iPhone y dejar
+                           abierta la pantalla de Compartir Internet.
+Traccar no muestra nada    Revisar que el identificador sea exacto y que haya
+                           fix (sin fix no sube).
+Cruce siempre SIN DATOS
+con las dos con fix        Perfil distinto en cada placa, o reloj de alguna
+                           mal (ver "t:" en la consola).
+El simulador no conecta    Cerrar el monitor serie de PlatformIO.
+Beacons simulados VIEJO    Reloj de la PC desincronizado más de 2 s.
+LED de la PMU a 4 Hz       Falla fatal: leer la pantalla o la consola.
+================================================================================
