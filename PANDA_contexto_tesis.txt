@@ -163,6 +163,31 @@ Lo que hay que resolver antes de implementarlo (EN DISCUSIÓN):
    propuesta de producto, con el prototipo demostrando la lógica.
 Esto se discute con el grupo antes de tocar el firmware.
 
+DECIDIDO (1-oct, segunda charla):
+- La barrera baja y sube según la VELOCIDAD REAL del tren, no la máxima de
+  la Tabla I.
+- Los trenes sin nodo (o con el nodo apagado) cierran como siempre, con el
+  circuito de vía.
+
+Números de referencia para elegir el ETA (umbral 25 s, tools/modelo_cruce.py).
+"Peor llegada" = el tren acelera al máximo (1 m/s², perfil de tracción) justo
+después de que se ordenó el cierre:
+  velocidad   solo velocidad real      real + 0,3 m/s² supuestos   circuito
+              cierra a  peor llegada   cierra a  peor llegada      400 m
+  10 km/h     69 m      9,3 s          163 m     15,7 s            144 s antes
+  20 km/h     139 m     12,2 s         233 m     17,4 s            72 s
+  40 km/h     278 m     16,2 s         372 m     20,3 s            36 s
+  60 km/h     417 m     19,0 s         510 m     22,5 s            24 s
+  100 km/h    694 m     22,1 s         788 m     24,9 s            14,4 s
+  120 km/h    833 m     25,0 s         832 m     25,0 s            12 s
+  Tren detenido que arranca al máximo: desde 50 m llega en 10 s, desde 150 m
+  en 17,5 s, desde 290 m en 25 s.
+Lectura: la ganancia está en los trenes lentos (debajo de 60 km/h), que es
+justo la situación de los cruces pegados a estaciones del AMBA. Arriba de
+60 km/h PANDA cierra antes que el circuito igual.
+
+EN DISCUSIÓN (ver sección 17).
+
 Además, contra la ineficiencia PANDA aporta, en cualquier variante:
 - Información real del tren (capa de inteligencia): posición, velocidad, ETA
   real, app de horarios, datos para el operador. Es lo que dice la lámina 2.
@@ -1043,15 +1068,55 @@ Decidido el 1-oct:
 - Beacon del prototipo en 100 ms. Producto a definir.
 - Traccar y TPL5010 quedan como TODO hasta probar el enlace.
 - Nodo tren en la cabina delantera.
-- El grupo quiere PANDA como sistema principal y el circuito de vía como
-  respaldo (falta definir la regla, sección 2).
+- PANDA es el sistema principal: baja y sube la barrera con la velocidad real
+  del tren. El circuito de vía queda de respaldo y sigue cerrando para los
+  trenes sin nodo.
 - El Hito 3 se arma con valores estimados, declarados como tales.
 
-Abiertas:
-1. Regla exacta de PANDA principal y qué ETA usar (sección 2).
-2. Formaciones reversibles: un nodo por cabina o uno solo (sección 12, 21).
-3. Telemetría del producto: solo en el cruce o también en el tren.
-4. Qué maqueta de barrera y qué micro para su controlador.
-5. ¿Hay feedback escrito del Hito 2?
-6. Química y capacidad de la batería del producto (sección 12, punto 8).
+Abiertas, que salen de PANDA principal (sección 2):
+1. Qué aceleración suponer en el ETA. Solo velocidad real deja casos de 9 a
+   12 s si el tren acelera fuerte (debajo de 20 km/h). Real + 0,3 m/s²
+   supuestos deja al menos 15,7 s. Depende del punto 2.
+2. Tiempo mínimo que necesita la barrera: preaviso de 5 s (8.6.6) + tiempo
+   de bajada del brazo + margen de barrera baja antes del tren. Define el
+   umbral (hoy 25 s).
+3. Tren detenido cerca del cruce (andén): arrancando desde 50 m llega en
+   10 s. Con velocidad real pura nunca cerraría a tiempo. Mantener la regla
+   de "detenido a menos de 290 m = no seguro".
+4. Cómo distingue PANDA un tren con nodo de uno sin nodo cuando el circuito
+   se ocupa. Propuesta: el circuito solo queda "explicado" si PANDA sigue un
+   tren con dato fresco cerca del punto de activación de ese circuito. Si
+   no, cierra como siempre. Sirve además de verificación cruzada.
+5. Vía doble o múltiple: un tren sin nodo en la vía 2 y uno con nodo en la
+   vía 1 a la misma distancia confunden la regla del punto 4. Circuito por
+   vía y distinguir la vía por GNSS (las vías están a unos 4 m) o, si hay
+   duda, cerrar.
+6. Subida de la barrera: con el nodo en el frente, la cola libera el cruce
+   cuando el frente pasó el largo de la formación. Hace falta el largo de
+   cada formación (en el beacon o por configuración). Y un segundo tren en
+   camino tiene que impedir la subida.
+7. Autoridad acotada (propuesta): PANDA solo puede demorar el cierre del
+   circuito para trenes que mide lentos (por ejemplo, debajo de 60 km/h).
+   Arriba no hay ganancia y así se limita el daño de un error de PANDA.
+8. Normativa: SETOP 8.6.12 toma la Tabla I como mínimo. Cerrar después que
+   el circuito para un tren lento no cumple la letra de la norma. Se
+   presenta como propuesta de cambio con argumento de equivalencia en
+   tiempo, ante ADIFSE y CNRT. La lámina 31 ("solo puede anticiparlo") y la
+   frase "cierre en OR, apertura en AND" hay que reescribirlas.
+9. Seguridad funcional: deja de ser el 1oo2 de la lámina 5 para los trenes
+   con nodo. Pasa a canal principal con autodiagnóstico y respaldo (1oo1D).
+   Hay que rehacer la lámina 5, R-25, R-26 y el DFMEA (un error de posición
+   de PANDA ahora puede llevar a barrera alta con tren, severidad 10).
+10. Interfaz con el controlador de barrera: propuesta, PANDA lee el circuito
+    y hace la atribución, y el controlador queda simple: con PANDA operativo
+    sigue a PANDA, sin PANDA operativo sigue al circuito. Propiedad buena:
+    como PANDA solo sostiene la barrera alta con ETA mayor al umbral, si se
+    cae en ese momento el circuito todavía tiene al menos el umbral.
+
+Abiertas de antes:
+11. Formaciones reversibles: un nodo por cabina o uno solo (sección 12, 21).
+12. Telemetría del producto: solo en el cruce o también en el tren.
+13. Qué maqueta de barrera y qué micro para su controlador.
+14. ¿Hay feedback escrito del Hito 2?
+15. Química y capacidad de la batería del producto (sección 12, punto 8).
 ================================================================================
