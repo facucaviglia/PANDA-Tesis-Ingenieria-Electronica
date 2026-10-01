@@ -7,6 +7,7 @@
 #include "button.h"
 #include "config.h"
 #include "crossing.h"
+#include "crossing_io.h"
 #include "gnss_manager.h"
 #include "radio_link.h"
 #include "radio_manager.h"
@@ -59,14 +60,28 @@ static void printInfo() {
     Serial.printf("Cruce: %s (%s), referencia %s %.7f, %.7f (%lu fixes promediados)\n", crossing::stateName(cs.state),
                   crossing::reasonName(cs.reason), crossing::refSourceName(cs.refSource), cs.refLatE7 / 1e7,
                   cs.refLonE7 / 1e7, static_cast<unsigned long>(cs.refSamples));
-    Serial.printf("Circuito de vía: %s (%s). Pasos %lu, vía sin PANDA %lu, liberados %lu, watchdog %lu\n",
-                  cs.trackOccupied ? "OCUPADA" : "LIBRE", cs.trackEnabled ? "entrada física" : "simulado",
-                  static_cast<unsigned long>(cs.passages), static_cast<unsigned long>(cs.trackWithoutPanda),
-                  static_cast<unsigned long>(cs.silentReleases), static_cast<unsigned long>(cs.watchdogTrips));
-    Serial.printf("Umbrales: ETA %.0f s, a_max %.1f m/s2, ocupación %.0f m, E-9 %lu ms\n",
-                  static_cast<double>(cfg::crossing::kAlertEtaS), static_cast<double>(cfg::crossing::kMaxAccelMps2),
+    Serial.printf("Circuito de vía: %s%s (%s), junta a %.0f m, rumbo %.0f. Pasos %lu, vía sin PANDA %lu, "
+                  "liberados %lu, inconsistentes %lu, watchdog %lu\n",
+                  cs.trackOccupied ? "OCUPADA" : "LIBRE", cs.trackOccupied ? (cs.trackExplained ? " explicada" : " SIN NODO") : "",
+                  cs.trackEnabled ? "entrada física" : "simulado", static_cast<double>(cs.circuitDistM),
+                  static_cast<double>(cs.circuitBearingDeg), static_cast<unsigned long>(cs.passages),
+                  static_cast<unsigned long>(cs.trackWithoutPanda), static_cast<unsigned long>(cs.silentReleases),
+                  static_cast<unsigned long>(cs.inconsistencies), static_cast<unsigned long>(cs.watchdogTrips));
+    Serial.printf("Umbral ETA %.0f s (fono %.0f + bajada %.0f + despeje %.0f + margen %.0f), a_max %.1f m/s2 hasta "
+                  "%.0f km/h, tope %.0f km/h, ocupación %.0f m, E-9 %lu ms\n",
+                  static_cast<double>(cfg::crossing::kAlertEtaS), static_cast<double>(cfg::crossing::kFonoluminosaS),
+                  static_cast<double>(cfg::crossing::kArmDownS), static_cast<double>(cfg::crossing::kClearanceS),
+                  static_cast<double>(cfg::crossing::kLatencyMarginS), static_cast<double>(cfg::crossing::kMaxAccelMps2),
+                  static_cast<double>(cfg::crossing::kAccelKneeMps) * 3.6,
+                  static_cast<double>(cfg::crossing::kLineMaxSpeedMps) * 3.6,
                   static_cast<double>(cfg::crossing::kOccupiedRadiusM),
                   static_cast<unsigned long>(cfg::beacon::kLinkTimeoutMs));
+    Serial.printf("Barrera: %s (%s), pedido de cierre %s\n",
+                  cfg::crossing::kBarrierOnBoard
+                      ? crossio::barrierPhaseName(static_cast<crossio::BarrierPhase>(cs.barrierPhase))
+                      : (cs.barrierDown ? "BAJA" : "alta"),
+                  cfg::crossing::kBarrierOnBoard ? "maqueta en esta placa" : "controlador externo",
+                  cs.closeRequest ? "SI" : "no");
   }
 #endif
   Serial.printf("GNSS a %lu baud, PSRAM libre %lu KB\n", static_cast<unsigned long>(g_stats.gnssBaud.load()),
@@ -148,6 +163,13 @@ static bool handleSimLine(char* line) {
       const char* b = strtok_r(nullptr, " ", &save);
       if (a == nullptr || b == nullptr) return false;
       crossing::setPcRef(static_cast<int32_t>(strtol(a, nullptr, 10)), static_cast<int32_t>(strtol(b, nullptr, 10)));
+      return true;
+    }
+    case 'Q': {
+      const char* a = strtok_r(nullptr, " ", &save);
+      const char* b = strtok_r(nullptr, " ", &save);
+      if (a == nullptr || b == nullptr) return false;
+      crossing::setPcCircuit(strtof(a, nullptr), strtof(b, nullptr));
       return true;
     }
     case 'B': {

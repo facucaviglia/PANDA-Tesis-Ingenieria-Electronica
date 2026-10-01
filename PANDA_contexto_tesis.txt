@@ -129,12 +129,14 @@ de que llegue el tren. No son el ciclo completo. El ciclo real que usa ADIF es:
   despejamiento             12 s (dc < 5 m), 14 s (5 a 10 m), 16 s (10 a 15 m)
   TOTAL                     29 s, 31 s o 33 s
 Y el sector de operación (el circuito de vía que dispara todo) se dimensiona
-para el tren más rápido, adoptando 120 km/h:
-  29 s × 33,3 m/s = 967 m antes del cruce (dc < 5 m).
-Un tren a 40 km/h que entra a esos 967 m tiene la barrera cerrada 87 s, contra
-los 29 s que necesita. Esa es la ineficiencia, medida con la norma real.
+para el tren más rápido, adoptando 120 km/h. En una vía doble (5 < dc <= 10 m,
+el caso típico del AMBA):
+  31 s × 33,3 m/s = 1033 m antes del cruce.
+Un tren a 40 km/h que entra a esos 1033 m tiene la barrera cerrada 93 s,
+contra los 31 s que necesita. Esa es la ineficiencia, medida con la norma real.
 El documento anterior y el firmware usaban 25 s (12 + 5 + 8) y un circuito a
 400 m. Estaba MAL: faltaba la bajada del brazo y el preaviso es 7 s, no 5.
+Corregido en el firmware 0.4.0.
 
 PROPUESTA DEL GRUPO (decidida el 1-oct):
 PANDA es el sistema PRINCIPAL que comanda el cierre y la apertura de la
@@ -143,38 +145,50 @@ sigue cerrando como siempre para los trenes sin nodo (o con el nodo caído).
 Prioridad del grupo: mejorar el sistema actual. Si PANDA ya es mejor en todos
 los casos, alcanza.
 
-Cómo se calcula el cierre sin perder seguridad (recomendado y aceptado como
-base): PANDA ordena el cierre cuando el tren, aunque acelerara al máximo que
-permite SU material rodante desde ahora, podría llegar en 29 s (el ciclo
-completo de ADIF). Así PANDA garantiza a CUALQUIER tren lo mismo que la norma le
-garantiza al tren más rápido, y nunca menos. La velocidad real se usa, y la
-aceleración posible sale del material rodante de la línea, no de un valor
-genérico.
+Cómo se calcula el cierre sin perder seguridad (implementado): PANDA ordena el
+cierre cuando el tren, aunque acelerara al máximo que permite SU material
+rodante desde ahora, podría llegar en 32 s (el ciclo de 31 s de ADIF más 1 s
+de margen propio). Así PANDA garantiza a CUALQUIER tren lo mismo que la norma
+le garantiza al tren más rápido, y nunca menos. La velocidad real se usa, y la
+aceleración posible sale del material rodante de la línea.
 
-Línea piloto: Mitre (CSR Sifang de 6 coches, ver sección 18). Perfil de
-tracción: 1,0 m/s² hasta 28,8 km/h (donde se acaba la potencia de 2160 kW con
-270 t vacío), después potencia constante, tope de la línea 100 km/h.
-Resultado (cálculo propio, circuito de ADIF a 967 m):
+Línea piloto: ROCA (decidido el 1-oct, sección 18). Motivos: el Anexo XII de
+ADIF, de donde salen todos los tiempos, es justamente el pliego del Roca, con
+la lista de cruces del ramal a La Plata, y es la línea con más pasos a nivel
+del AMBA. Es la que tiene más información para el proyecto.
+Perfil de tracción de peor caso (CSR): 1,0 m/s² hasta 40 km/h, después
+potencia constante, tope 120 km/h. Resultado (tools/modelo_cruce.py, función
+close_distance, circuito de ADIF a 1033 m):
   velocidad   circuito actual   PANDA cierra a   aviso PANDA a     ganancia
-              (aviso a vel cte)                  velocidad cte
-  10 km/h     348 s             397 m            143 s             205 s
-  20 km/h     174 s             446 m            80 s              94 s
-  30 km/h     116 s             489 m            59 s              57 s
-  40 km/h     87 s              536 m            48 s              39 s
-  50 km/h     70 s              590 m            43 s              27 s
-  60 km/h     58 s              649 m            39 s              19 s
-  70 km/h     50 s              709 m            37 s              13 s
-  80 km/h     44 s              759 m            34 s              9 s
-  90 km/h     39 s              793 m            32 s              7 s
-  100 km/h    35 s              806 m            29 s              6 s
-  Tren detenido: PANDA lo considera peligro hasta 344 m (arrancando al
-  máximo desde 50 m llega en 10 s, desde 150 m en 18 s).
-Si los circuitos del Mitre estuvieran calculados a 100 km/h (806 m) en vez de
-120, la ganancia a 100 km/h sería cero y a 40 km/h 24 s. Sigue siendo mejor
-en todo el rango.
+              (aviso a vel cte)                  velocidad cte     por paso
+  10 km/h     372 s             513 m            185 s             187 s
+  20 km/h     186 s             574 m            103 s             83 s
+  30 km/h     124 s             630 m            76 s              48 s
+  40 km/h     93 s              682 m            61 s              32 s
+  50 km/h     74 s              735 m            53 s              22 s
+  60 km/h     62 s              794 m            48 s              14 s
+  70 km/h     53 s              858 m            44 s              9 s
+  80 km/h     47 s              922 m            42 s              5 s
+  90 km/h     41 s              979 m            39 s              2 s
+  100 km/h    37 s              1025 m           37 s              0,3 s
+  120 km/h    32 s              1066 m           32 s              0 (igual)
+  Tren detenido: PANDA lo considera peligro hasta 448 m (arrancando al
+  máximo desde 50 m llega en 10 s, desde 150 m en 17,5 s).
+Si el tramo del cruce tiene un límite de 90 km/h que hace cumplir el ATS y se
+configura ese tope, la ganancia sube: 11 s a 80 km/h, 18 s a 60 km/h.
+La apertura queda igual que hoy: cuando el circuito se libera con el tren ya
+alejándose, PANDA deja de sostener el cierre en ese mismo instante.
 Con la velocidad real pura (sin suponer aceleración) se ganaría más, pero un
-tren que acelera llegaría en 10 a 25 s, menos que los 29 s de la norma. Se
-descarta: no cumple "mejor que lo actual en todos los casos".
+tren que acelera después de la orden llegaría en 11 a 28 s según la
+velocidad, menos que los 31 s de la norma. Se descarta: no cumple "mejor que
+lo actual en todos los casos".
+Punto 7 (autoridad acotada por velocidad): con estos números hay ganancia
+hasta 90 km/h (9 s a 70 km/h, 5 s a 80 km/h), así que el firmware NO pone un
+tope de velocidad a la autoridad de PANDA. El riesgo de un error de posición
+lo controlan la atribución del circuito y la plausibilidad.
+Simulador (tools/sim_trenes.py --seco, tiempo de pedido de cierre por pasada):
+  40 km/h 80 s contra 112 s (+32 s), detenido a 500 m 72 s contra 110 s
+  (+38 s), 100 km/h 44,3 s contra 44,8 s, tren sin nodo igual que hoy.
 
 Además, contra la ineficiencia PANDA aporta, en cualquier variante:
 - Información real del tren (capa de inteligencia): posición, velocidad, ETA
@@ -224,26 +238,31 @@ Ojo: en un cruce sin circuito de vía (peatonal pasivo) no hay 1oo2, PANDA es
 el único canal. Ahí PANDA sigue sumando (antes no había nada activo), pero no
 se puede citar la mejora de mil veces.
 
-INVARIANTE DE SEGURIDAD PRESENTADO EN EL HITO 2 E IMPLEMENTADO HOY EN EL
-FIRMWARE (el grupo propone cambiarlo a PANDA principal, ver sección 2):
-  CIERRE   = OR   La barrera cierra si lo pide PANDA o si lo pide el circuito de vía.
-  APERTURA = AND  La barrera abre solo si PANDA y el circuito de vía coinciden en
-                  vía libre.
-Consecuencia: ninguna falla de PANDA puede impedir un cierre ni adelantar una
-apertura. Si PANDA se cae, el cruce degrada al comportamiento actual, nunca peor.
-Un cierre innecesario por PANDA genera demora vial pero no riesgo (severidad 4).
+INVARIANTE DE SEGURIDAD (VERSIÓN VIGENTE, PANDA PRINCIPAL, firmware 0.4.0):
+PANDA entrega DOS contactos al controlador de barrera, "PANDA libre" y "PANDA
+operativo", los dos con lógica energizado = permiso. La regla es:
+  con PANDA operativo:   baja si PANDA pide cierre
+  sin PANDA operativo:   baja si el circuito de vía está ocupado, igual que hoy
+Y PANDA pide cierre si:
+  - algún tren con nodo podría llegar en 32 s aunque acelerara al máximo, o
+    está sobre el cruce, o se calló, o manda datos inconsistentes, o
+  - el circuito de vía se ocupó y PANDA no sigue al tren que lo ocupó (tren
+    sin nodo o con el nodo caído): cierra como siempre.
+Consecuencias:
+- Un tren sin nodo tiene la misma protección que hoy.
+- Un tren con nodo tiene, con cualquier velocidad, al menos el tiempo que la
+  norma le da al tren más rápido (31 s más 1 s de margen).
+- Un corte de cable o de alimentación abre los dos contactos: la barrera
+  sigue al circuito. Si PANDA se cae mientras sostiene la barrera alta, el
+  circuito ya está ocupado y la baja de inmediato, y el tren está a más de
+  32 s de peor caso, así que el ciclo completo entra.
+- Lo que cambia frente al Hito 2: deja de ser 1oo2 puro para los trenes con
+  nodo (sección 2 y 18.6). El riesgo nuevo, una posición mal informada, lo
+  cubren la atribución del circuito y la plausibilidad.
 
-Precisión que agregó el firmware (contarla en el Hito 3): PANDA entrega DOS
-contactos al controlador de barrera, "PANDA libre" y "PANDA operativo", los dos
-con lógica energizado = permiso. Sin el segundo, un PANDA muerto con apertura
-en AND dejaría la barrera baja para siempre, y eso tampoco es "comportamiento
-actual". La regla completa es:
-  con PANDA operativo:   baja si (PANDA pide cierre) O (vía ocupada)
-  sin PANDA operativo:   baja si (vía ocupada), igual que hoy
-Un corte de cable o de alimentación desenergiza los dos relés: PANDA pide
-cierre y a la vez se declara no operativo, así que la barrera sigue al
-circuito de vía. Ninguna combinación de fallas de PANDA abre una barrera con
-la vía ocupada.
+Invariante que se presentó en el Hito 2 (queda como historia, cambia en el
+Hito 3): CIERRE = OR, APERTURA = AND. Con esa regla PANDA solo podía agregar
+cierre y no había ganancia de eficiencia en cruces con barrera automática.
 
 Reglas fail-safe:
 - "Sin datos" nunca es "vía libre". El firmware refinó E-9: un tren pasa a SIN
@@ -383,11 +402,10 @@ de LED con medición de corriente por cadena, bocina industrial IP65 de 100 dB a
 1 m, columna de 2,40 m, gabinete con pantalla negra y visera según Decreto
 779/95 Anexo L cap. VII punto 36 inc. c. NO comprar semáforo peatonal con verde.
 Franja luminosa en el piso: mejora futura.
-Umbral de decisión: hoy el firmware usa ETA mínimo <= 25 s (12 + 5 + 8), que
-está MAL. Con el Anexo XII de ADIF tiene que ser 7 s de fonoluminosa + 10 s
-de bajada + 12, 14 o 16 s de despejamiento según dc = 29, 31 o 33 s, más la
-latencia propia de PANDA. Y el perfil de aceleración tiene que ser el del
-material rodante de la línea (sección 2). PENDIENTE de pasar al firmware.
+Umbral de decisión (firmware 0.4.0): ETA de peor caso <= 32 s = 7 s de
+fonoluminosa + 10 s de bajada + 14 s de despejamiento (vía doble) + 1 s de
+margen propio (Anexo XII de ADIF). Con vía simple serían 30 s y con dc de 10 a
+15 m, 34 s. El perfil de aceleración es el del material rodante de la línea.
 Semáforo peatonal de un paso peatonal puro (Anexo XII): rojo t_sem = t_p + 3 s
 antes del tren, con t_p = d_p / 0,7 m/s (d_p = distancia entre líneas de
 detención peatonal).
@@ -445,8 +463,10 @@ Aviso sonoro        | Bocina IP65, 100 dB a 1 m          | Buzzer (GPIO 48), lue
 Salida a barrera    | Relé 24 V 10 A, salida simple      | Dos salidas "PANDA libre" y
                     |                                    | "PANDA operativo" (LEDs al
                     |                                    | principio, relés después)
-Barrera             | Controlador y barrera existentes   | Estado calculado en la OLED, luego
-                    |                                    | maqueta con su propio controlador
+Barrera             | Controlador y barrera existentes   | Maqueta (servo y dos luces) que
+                    |                                    | maneja la misma T-Beam con un
+                    |                                    | módulo aparte del firmware
+OTRO TREN           | Óptica del Anexo XII               | LED (GPIO 45)
 Watchdog externo    | TPL5010                            | TODO: comentado en el firmware
 Alimentación        | 220 Vac + fuente 24 V + baterías   | 18650 en la T-Beam o power bank
 Registro            | Flash del ESP32 como buffer + server| microSD (CSV a 10 Hz)
@@ -533,10 +553,13 @@ Compras mínimas para el 10-oct (lo indispensable primero):
     abierto = OCUPADA (la entrada tiene pull-up). Activar
     cfg::crossing::kTrackCircuitEnabled al cablearlo.
   - Protoboard y cables dupont.
+  - Un servo SG90 o MG996R para el brazo de la maqueta (señal al GPIO 21,
+    5 V aparte) y dos LEDs rojos para las luces de la barrera (GPIO 38 y 3).
+  - Un LED para OTRO TREN (GPIO 45, con resistencia a GND).
   Para después (Hito 4): sirena piezoeléctrica de 12 V tipo alarma (unos
-  100 a 110 dB, para E-20), relés con aislación >= 2,5 kV, optoacoplador
-  PC817 para la entrada de vía, un Arduino Nano y un servo para la maqueta,
-  INA219 para la corriente del LED, TPL5010.
+  100 a 110 dB, para E-20), optoacoplador PC817 para la entrada de vía,
+  INA219 para la corriente del LED, TPL5010. Relés con aislación >= 2,5 kV
+  solo si se usa un controlador de barrera externo.
 
 7.2 Firmware (repo github.com/facucaviglia/PANDA-Tesis-Ingenieria-Electronica,
 carpeta firmware/panda-node, detalle completo en PANDA_contexto_firmware.txt)
@@ -545,9 +568,11 @@ Un solo código con tres roles elegidos al compilar:
 - tren: lo anterior + beacon LoRa de 35 bytes cifrado (AES-128-CTR) y
   autenticado (CMAC), uno cada 100 ms en su ranura TDMA alineada al PPS,
   contador anti repetición persistente.
-- cruce: recibe y valida beacons (CRC, CMAC, contador, frescura), lógica de
-  decisión con ETA mínimo, estados APAGADO / NO SEGURO / FALLA, OR y AND con el
-  circuito de vía, salidas físicas con energizado = permiso, vigilancia.
+- cruce: recibe y valida beacons (CRC, CMAC, contador, frescura), PANDA
+  principal con el ciclo de ADIF y el ETA de peor caso, atribución del
+  circuito de vía, plausibilidad contra el último dato confiable, OTRO TREN,
+  maqueta de barrera con la secuencia del Anexo XII, vigilancia.
+- El beacon (versión 2) lleva además la aceleración medida por el GNSS.
 Visualización (no hace falta Traccar para ver todo):
 - OLED de 128 × 64 en cada placa, refresco a 5 Hz. Tren: fix, satélites,
   precisión, velocidad, rumbo, beacons enviados, ranura, perfil, potencia y
@@ -568,30 +593,22 @@ Estado de fases:
 TODO comentados a propósito (1-oct): telemetría a Traccar
 (cfg::telemetry::kEnabled = false) y watchdog externo TPL5010. Se activan
 después de probar el enlace entre las dos placas.
-Recompilado el 1-oct-2026: los tres roles compilan sin errores.
+Firmware 0.4.0 (1-oct-2026): los tres roles compilan sin errores, la
+criptografía da OK y los 11 escenarios del simulador dan lo esperado.
 Decisiones del prototipo que NO se reabren: LoRa en 915 MHz (FSK descartado),
 beacon a 10 Hz, 35 bytes, TDMA de 100 ms por PPS, GNSS por UBX NAV-PVT.
 
 7.3 Qué falta para el prototipo completo (lo que se va a mostrar en el Hito 4)
-- Definir con el grupo la lógica PANDA principal (sección 2) y llevarla al
-  firmware.
-- Maqueta de barrera con su PROPIO controlador (otro micro barato, por ejemplo
-  un Arduino Nano). Recibe los dos contactos de PANDA y el interruptor de vía,
-  aplica la regla acordada, maneja el servo del brazo, las dos luces
-  alternadas cada 0,5 s (8.6.5), el preaviso de 5 s antes de bajar (8.6.6) y
-  la campana. Así se muestra que PANDA entrega contactos y no controla el
-  motor, igual que en el producto. Este firmware NO está escrito.
-- Salidas con relés de aislación bobina-contacto de al menos 2,5 kV (E-21, los
-  módulos baratos tipo SRD dan 1,5 kV y no cumplen) y entrada de vía con
-  optoacoplador.
-- Señal sonora que llegue a 95 dB a 1 m (E-20). Un buzzer chico no llega:
-  sirena de 12 V conmutada por transistor.
+- Probar todo en las placas (desde el 10-oct).
+- Construir la maqueta física (brazo, servo, luces) y cablearla a la T-Beam
+  del cruce. El firmware del controlador ya está.
+- Señal sonora que llegue a 95 dB a 1 m (E-20): sirena de 12 V con transistor.
 - Watchdog externo TPL5010 (DFMEA, TODO).
-- Doble cadena de LED con medición de corriente. OJO: casi no quedan GPIO
-  libres en la T-Beam (quedan 3, 45 y 46, y 45 y 46 son de arranque). Conviene
-  colgar del QWIIC (I2C) un medidor tipo INA219 o INA3221.
+- Doble cadena de LED con medición de corriente por I2C (INA219), porque ya
+  no quedan GPIO libres.
 - Antenas de 915 MHz decentes, pigtails y atenuadores SMA (opcionales).
 - Sonómetro (o app de celular calibrada) para medir E-20.
+- Telemetría (TODO Traccar) después de probar el enlace.
 
 
 8. MARCO NORMATIVO Y LEGAL
@@ -672,21 +689,27 @@ Las pruebas P1 a P6 son las de la sección 11 de PANDA_contexto_firmware.txt.
 9.1 Normativa y señales
 Objetivo                        | Cómo lo cumple el prototipo         | Cómo se mide              | Estado
 --------------------------------|-------------------------------------|---------------------------|-------
-SETOP 8.6.12 y Anexo XII: ciclo | Cierre cuando el peor ETA con el    | ETA predicho contra paso  | A CAMBIAR
-7 + 10 + 12 = 29 s (dc < 5 m)   | perfil de la flota <= 29 s (hoy el  | real marcado con el botón | (hoy 25 s)
-                                | firmware usa 25 s, a corregir)      | (P5 y P6). Anticipación   |
-                                |                                     | medida >= 29 s            |
-8.6.5 luces alternadas 0,5 s    | Controlador de la maqueta           | Video o analizador lógico | FALTA
-8.6.6 / R-22 / E-19 preaviso    | Controlador de la maqueta: luces y  | Analizador lógico entre   | FALTA
-5 s antes de bajar el brazo     | sonido 5 s antes de mover el servo  | luz y servo               |
+SETOP 8.6.12 y Anexo XII: ciclo | Cierre cuando el peor ETA con el    | ETA predicho contra paso  | IMPL
+7 + 10 + 14 = 31 s (vía doble)  | perfil de la flota <= 32 s (31 + 1  | real marcado con el botón |
+                                | de margen)                          | (P5 y P6). Anticipación   |
+                                |                                     | medida >= 31 s            |
+8.6.5 luces alternadas 0,5 s    | Maqueta (GPIO 38 y 3)               | Video o analizador lógico | IMPL, falta
+                                |                                     |                           | la maqueta
+8.6.6 / R-22 / E-19 preaviso    | Maqueta: FONO de 7 s (Anexo XII)    | Analizador lógico entre   | IMPL, falta
+                                | antes de mover el servo             | luz y servo               | la maqueta
+Anexo XII: OTRO TREN            | LED (GPIO 45) y sonido al doble     | Simulador "dos"           | IMPL
+Plausibilidad (DFMEA RPN 120)   | Envolvente física contra el último  | Simulador "salto"         | HECHO en
+                                | dato confiable                      |                           | modelo
+Trenes sin nodo                 | Circuito sin explicar: cierra como  | Simulador "via"           | HECHO en
+                                | siempre                             |                           | modelo
 8.6.7 / R-23 / E-20 campana     | Firmware: 1 toque por s (200 ms a   | Sonómetro a 1 m           | IMPL en
 1 por s, >= 95 dB a 1 m         | 2,5 kHz). Falta el hardware sonoro  |                           | firmware,
                                 |                                     |                           | FALTA HW
 Decreto 779/95: óptica roja,    | LED rojo único, dos estados         | Inspección                | IMPL
 sin verde                       | (no seguro o apagado)               |                           |
-R-24 a R-26: OR para cerrar,    | Firmware + dos contactos + regla en | Fallas inducidas con la   | IMPL,
-AND para abrir (EN DISCUSIÓN,   | el controlador de la maqueta        | maqueta. Métrica: evento  | maqueta
-PANDA principal, sección 2)     |                                     |                           |
+R-24 a R-26 (A REESCRIBIR con   | PANDA principal: dos contactos, el  | Fallas inducidas con la   | IMPL
+PANDA principal, sección 2)     | controlador sigue a PANDA si está   | maqueta. Métrica: evento  |
+                                | operativo y si no al circuito       |                           |
                                 |                                     | "vía ocupada con PANDA en | FALTA
                                 |                                     | vía libre", y nunca       |
                                 |                                     | barrera alta con vía      |
@@ -726,7 +749,7 @@ línea de vista                  | abajo                               | pérdid
 E-6 latencia <= 300 ms          | Se mide la antigüedad del dato en   | Consola "edad" y rx.csv.  | IMPL
                                 | el cruce. Esperado 50 a 150 ms      | Percentil 99 < 300 ms     |
 E-8a/b predicción y umbral      | ETA mínimo con perfil de tracción,  | Simulador (hecho) + P5/P6 | HECHO en
-configurable                    | umbral 25 s                         |                           | modelo
+configurable                    | umbral 32 s                         |                           | modelo
 E-10 alerta en <= 500 ms        | Decisión a 20 Hz (50 ms)            | t_us del beacon contra    | IMPL
                                 |                                     | cambio de salida          |
 E-12 respaldo >= 4 h            | 18650 en la T-Beam                  | Descarga completa con la  | FALTA
@@ -791,7 +814,7 @@ Modos a agregar en el Hito 3 (hay que recalcular el acumulado):
 - NUEVO: nodo tren lejos del frente de la formación. El ETA se calcula con
   la posición de la antena. Si el nodo fuera en la cola, el frente llegaría
   antes: con 250 m de formación a 120 km/h son 250 / 33,3 = 7,5 s de atraso,
-  casi todo el margen de 8 s del umbral de 25 s. Severidad 10.
+  más de lo que cubre el margen de 1 s. Severidad 10.
   Acción DECIDIDA (1-oct): requisito de instalación, el nodo va en la cabina
   delantera. Documentado en config.h. Detección: inspección de instalación.
   Pendiente de discutir: en formaciones reversibles la cabina delantera cambia
@@ -803,6 +826,14 @@ Modos a agregar en el Hito 3 (hay que recalcular el acumulado):
   ranura estilo SOTDMA.
 - Unificar control y acción del último modo: el control "CSMA" no es lo que se
   implementa. Lo implementado es TDMA sincronizado por PPS.
+- NUEVO (PANDA principal): posición errónea del tren con la barrera sostenida
+  alta por PANDA y el circuito ocupado. Severidad 10. Controles implementados:
+  atribución del circuito (el tren tiene que estar a 1033 ± 100 m cuando el
+  circuito se ocupa) y plausibilidad contra el último dato confiable (frenado
+  de emergencia y aceleración máxima). Pendiente: plausibilidad contra la IMU
+  (fase 4).
+- El modo "posición errónea no marcada inválida" (RPN 120) ya tiene la acción
+  "validación con modelo de predicción" implementada en el firmware.
 
 
 11. FACTIBILIDAD ECONÓMICA VIGENTE (láminas 25 a 30, PANDA_flujo_de_caja.xlsx)
@@ -899,21 +930,18 @@ Nuevas, detectadas al cruzar el deck con el firmware:
 17. ABIERTA. El documento anterior proponía FSK a 9600 bps para el prototipo.
     Se descartó: el firmware usa LoRa SF7/500 kHz (18 ms de aire). Contarlo
     como decisión de prototipo.
-18. EN DISCUSIÓN. PANDA principal y circuito de vía como respaldo (sección 2).
-    Cambia el invariante OR/AND, el argumento 1oo2 y el firmware del cruce.
+18. RESUELTA. PANDA principal y circuito de vía como respaldo (sección 2),
+    implementado en el firmware 0.4.0. Falta pasarlo a las láminas: lámina 5
+    (1oo2), lámina 31 ("solo puede anticiparlo"), R-25 y R-26.
 19. ABIERTA. E-9 está escrito como "sin beacon > 1 s = sin datos" y el
     firmware hace algo más fino (sección 3). Reescribir la spec para que el
     firmware la cumpla literalmente.
 20. ABIERTA. Falta en las láminas el segundo contacto "PANDA operativo" y la
     regla completa del controlador de barrera (depende del punto 18).
-21. RESUELTA CON PENDIENTE. Posición del nodo: va en la cabina delantera
-    (requisito de instalación, en config.h). Pendiente: las formaciones
-    eléctricas del AMBA son reversibles y la cabina delantera cambia con el
-    sentido de marcha. Opciones: un nodo en cada cabina (los dos transmiten, el
-    cruce ya toma el peor caso por tren, y suma redundancia, pero duplica los
-    nodos tren del modelo económico) o un nodo por formación que sepa en qué
-    punta está. También queda el largo de formación: el firmware supone hasta
-    250 m y las cargueras tienen 1 a 2 km.
+21. RESUELTA. Nodo en la cabina delantera (requisito de instalación). En el
+    producto, dos nodos por formación, uno en cada cabina, y transmite el de
+    adelante (trabajo futuro, el prototipo usa uno). Largo de formación: 210 m
+    (Roca, 8 coches). Las cargueras no tienen nodo: las cubre el circuito.
 22. ABIERTA, SIN IMPACTO EN EL PROTOTIPO. La ranura sale del ID de la MAC y
     dos trenes pueden caer en la misma. Con una sola placa tren no pasa. Para
     el producto: ID asignado en la provisión.
@@ -939,7 +967,7 @@ Especificaciones clave: E-1 GNSS >= 3 Hz, E-2 <= 2,5 m CEP, E-3 beacon (A
 REHACER: 100 ms prototipo, producto a definir), E-4 enlace (A REHACER), E-5
 alcance >= 1.500 m con línea de vista, E-6 latencia extremo a extremo <= 300 ms,
 E-7 clasificación de IDs, E-8a predicción de arribo, E-8b criterio configurable
-(hoy ETA mínimo <= 25 s), E-9 sin datos (A REHACER, sección 3), E-10 alerta en
+(ETA de peor caso <= 32 s), E-9 sin datos (A REHACER, sección 3), E-10 alerta en
 <= 500 ms, E-11 12 V regulado a 5 V, E-12 respaldo >= 4 h (el DFMEA lo lleva a
 8 h), E-13 registro >= 2 h exportable, E-14 peso <= 500 g e instalación <= 1 h,
 E-15 costo (INCONSISTENTE), E-16 IP67, E-17 IEC 61373 cat. 1 clase B, E-18 -20 a
@@ -963,7 +991,7 @@ Del 1 al 7-oct · ENTREGA DEL HITO 3 (toda documental, sin placas)
 - Diagrama de bloques de hardware del producto y del prototipo (sección 6).
 - Cálculos con valores estimados y su método: presupuesto de enlace (5.2 y
   9.2), consumo y batería, regulación con picos de 1,2 A, TDMA y capacidad
-  (5.2), umbral de 25 s y perfil de tracción (PANDA_contexto_firmware.txt
+  (5.2), umbral de 32 s y perfil de tracción (PANDA_contexto_firmware.txt
   sección 6).
 - Comparación prototipo contra producto con Raveon (sección 6.1).
 - Esquemático del prototipo: T-Beam + módulos acoplados (LEDs, buzzer,
@@ -1001,7 +1029,7 @@ Del 21-oct al 11-nov · campo e integración (entrega Hito 4 el 11-nov)
 - Viaje 1 con el registrador y después P6 viaje en tren con tren y cruce.
 - Fase 4 del firmware (IMU) con los datos del viaje.
 - Activar los TODO: Traccar (telemetría) y, si se compra, el TPL5010.
-- Maqueta de barrera con su controlador, integración con el nodo cruce.
+- Maqueta física de la barrera cableada a la T-Beam del cruce.
 - Ensayo de 24 h para E-24. Medición de sonido (E-20). Descarga de batería.
 
 Del 11-nov al 2-dic · validación y cierre
@@ -1014,7 +1042,11 @@ Del 11-nov al 2-dic · validación y cierre
 --------------------------------------------------------------------------------
 - "PANDA agrega una capa, no reemplaza nada. Cualquier falla nuestra degrada el
   cruce a su comportamiento actual, nunca por debajo."
-- "Cierre en OR, apertura en AND." (revisar si se adopta PANDA principal)
+- "Cierre en OR, apertura en AND." (Hito 2. En el Hito 3 se reemplaza por:
+  "PANDA manda, el circuito respalda, y un tren que PANDA no ve cierra como
+  siempre.")
+- "A cualquier velocidad, PANDA le da a cada tren por lo menos lo que la norma
+  le da al más rápido."
 - "El estado seguro del semáforo peatonal es no seguro. El sistema nunca afirma
   que se puede cruzar."
 - "La IMU no es para navegar, es para verificar que el GNSS no está mintiendo."
@@ -1067,10 +1099,12 @@ Decidido el 1-oct:
   del tren. El circuito de vía queda de respaldo y cierra como siempre para
   los trenes sin nodo.
 - Cierre cuando el peor ETA (aceleración máxima del material rodante de la
-  línea) es <= ciclo de ADIF (29, 31 o 33 s según dc). Así PANDA es mejor que
-  lo actual en todo el rango de velocidades (sección 2). Línea piloto: Mitre.
-- Tren detenido cerca del cruce: sigue siendo peligro (con el perfil del
-  Mitre, hasta 344 m).
+  línea) es <= ciclo de ADIF + 1 s (32 s en vía doble). Así PANDA es mejor que
+  lo actual en todo el rango de velocidades (sección 2). Línea piloto: ROCA.
+- Tren detenido cerca del cruce: sigue siendo peligro (hasta 448 m).
+- Sin tope de velocidad para la autoridad de PANDA: hay ganancia hasta 90 km/h.
+- Beacon versión 2: la precisión pasa a 1 byte en dm y el byte libre lleva la
+  aceleración. Sigue en 35 bytes y 5 ranuras.
 - Atribución del circuito: la ocupación queda "explicada" solo si PANDA sigue
   un tren con dato fresco cerca del punto de activación de ese circuito. Si
   no, cierra como siempre.
@@ -1080,38 +1114,27 @@ Decidido el 1-oct:
   aceleración al cruce. El cruce decide con eso y sube al servidor los datos
   de sus trenes cercanos. El nodo tren NO tiene módem celular: sale el
   SIM7080G del BOM del nodo tren (USD 18 menos por nodo).
-- Prototipo: la maqueta de barrera la maneja la misma T-Beam del cruce.
-  Batería del prototipo: la 18650 de la T-Beam.
+- Prototipo: la maqueta de barrera la maneja la misma T-Beam del cruce
+  (implementado). Batería del prototipo: la 18650 de la T-Beam.
+- Sin luz verde: solo NO SEGURO o apagado. Se suma OTRO TREN del Anexo XII.
 
 Abiertas:
-1. Autoridad acotada por velocidad (punto 7): con el ETA de peor caso la
-   ganancia sigue a 70 y 80 km/h (13 s y 9 s, sección 2). Recomendación: no
-   acotar por velocidad. El riesgo de un error de posición se controla con la
-   atribución del circuito y la plausibilidad con la IMU.
-2. Cómo se mide la aceleración: la IMU y el GNSS miden la aceleración ACTUAL
-   (ver sección 18.4). Para la seguridad cuenta la máxima que el tren PUEDE
-   hacer en los próximos 29 s, que es del material rodante. Se usa la medida
-   para validar el perfil en el viaje, para plausibilidad y para detectar
-   frenado. Falta meterla en el beacon (sección 18.5).
-3. Subida de la barrera: con el nodo en el frente hace falta el largo de la
-   formación (Mitre 132,2 m). Propuesta: el largo va en el beacon, cargado en
-   el nodo tren al instalarlo. Más el tiempo de espera de 5 s del Anexo XII y
-   no subir si viene otro tren.
-4. Vía doble: distinguir la vía por GNSS (entrevía de unos 4 m, a verificar)
-   o, si hay duda, cerrar.
-5. Normativa: el Anexo XII dice que no se admiten distintos tipos de sistemas
+1. Justificar en el Hito 3 por qué PANDA no usa verde, si el Anexo XII sí.
+2. Varios trenes en un mismo cruce (ver sección 18.7): confirmar en el otro
+   documento lo de "no pueden pasar 2 trenes", porque el SETOP 5.2.3.3 h y el
+   Anexo XII ("OTRO TREN") contemplan dos.
+3. Normativa: el Anexo XII dice que no se admiten distintos tipos de sistemas
    de detección (solo circuitos de vía). PANDA principal pide cambiar esa
    especificación con ADIF, además del argumento de equivalencia en tiempo
    ante el SETOP 8.6.12.
-6. Semáforo peatonal: el Anexo XII usa verde en ausencia de trenes y PANDA
-   decidió no usar verde nunca. Hay que justificarlo en el Hito 3. Y sumar la
-   indicación "OTRO TREN" (segundo tren) que pide el Anexo XII.
-7. Seguridad funcional: pasa de 1oo2 a canal principal con diagnóstico y
+4. Seguridad funcional: pasa de 1oo2 a canal principal con diagnóstico y
    respaldo (1oo1D) para los trenes con nodo. Rehacer lámina 5, R-25, R-26 y
-   DFMEA (sección 18.6).
-8. Formaciones reversibles con dos nodos: cómo transmite solo el de adelante,
-   o si transmiten los dos (futuro).
-9. ¿Hay feedback escrito del Hito 2?
+   DFMEA.
+5. Formaciones reversibles con dos nodos: cómo transmite solo el de adelante
+   (futuro).
+6. Una entrada de circuito por vía y por lado en el producto (la placa tiene
+   una sola).
+7. ¿Hay feedback escrito del Hito 2?
 
 
 18. DATOS REALES DEL AMBA (investigación del 1-oct)
@@ -1148,21 +1171,25 @@ Lo que sirve para PANDA:
   1,5 a 2 veces más rápido con "OTRO TREN", más bajo de noche.
 - Punto 16: la lógica tiene que ser inmune a la electrificación de 25 kV CA.
 
-18.2 Material rodante (línea piloto Mitre). Fuente: Wikipedia, "Unidad
-eléctrica múltiple CSR (Mitre y Sarmiento)" y "CSR (Roca)".
+18.2 Material rodante. Línea piloto: ROCA. Fuente: Wikipedia, "Unidad
+eléctrica múltiple CSR (Roca)" y "CSR (Mitre y Sarmiento)".
+- Roca: CSR, unidades de 3 y 4 coches con acople semipermanente que arman
+  formaciones de 6, 7 u 8 coches de unos 25,8 m (hasta unos 206 m), motores
+  de 250 kW, catenaria de 25 kV 50 Hz, máxima 120 km/h. Aceleración
+  "superior a 0,8 m/s²", frenado de servicio 1,0 m/s² y de emergencia
+  1,2 m/s². Masa y potencia total no publicadas de forma consistente.
+- Perfil de peor caso usado en el firmware: 1,0 m/s² hasta 40 km/h, después
+  potencia constante, tope 120 km/h. El codo en 40 km/h sale de la potencia
+  más alta que da la ficha de la familia CSR (190 kW por motor, 3040 kW en 6
+  coches de 45 t: P / (m × a0) = 11,3 m/s), del lado seguro. A VALIDAR con
+  la aceleración medida en el viaje.
+Datos del Mitre (se analizó primero, queda como referencia):
 - Mitre: CSR Sifang, 30 formaciones de 6 coches (TC-M-M-M-M-TC), 132,2 m,
   cabina en cada punta (reversible), 2160 kW, 45 t por coche, tercer riel de
   800 V CC, máxima de diseño 120 km/h, de servicio 100 km/h.
 - Sarmiento: misma familia, 9 coches, 197,6 m, 3600 kW.
-- Roca: CSR Zhuzhou, 6 a 8 coches de unos 25,8 m (hasta unos 206 m),
-  aceleración "superior a 0,8 m/s²", frenado 1,0 m/s² de servicio y 1,2 de
-  emergencia. Es el único dato publicado de aceleración: para el Mitre se
-  supone 1,0 m/s² (conservador) hasta que la potencia limita.
-- Perfil de peor caso Mitre usado en la sección 2: 1,0 m/s² hasta
-  P / (m × a) = 2160 kW / (270 t × 1 m/s²) = 8 m/s = 28,8 km/h, después
-  potencia constante (sin descontar resistencia ni rendimiento, lo que
-  sobreestima la aceleración y queda del lado seguro), tope 100 km/h.
-  A VALIDAR con el registrador en el viaje en tren.
+- Ojo con la ficha: 190 kW por motor en 4 coches motores con 4 motores da
+  3040 kW, no los 2160 kW que figuran. Por eso se tomó el valor más alto.
 - Mitre tiene ATS (frenado automático por balizas) en los ramales J. L.
   Suárez y Bartolomé Mitre desde julio de 2024 (Retiro a Tigre pendiente).
   Señal de que ya hay equipamiento embarcado de seguridad en las cabinas.
@@ -1199,6 +1226,21 @@ para no perder la quinta ranura: hAccCm (2 bytes) pasa a 1 byte en decímetros
 (hasta 25,5 m, alcanza) y el byte que sobra lleva la aceleración en pasos de
 0,02 m/s² (más o menos 2,5 m/s²). El beacon sigue en 35 bytes.
 
+18.7 Cuántos trenes puede haber a la vez en un cruce
+- En una vía doble cada vía tiene su sentido, y la señalización por bloques
+  deja un solo tren por cantón y por vía. Cerca de un cruce, en la práctica,
+  hay como mucho uno por vía, o sea uno en cada sentido. Pero:
+  - Cerca de una estación puede haber un tren parado en el andén y otro
+    esperando en la señal de atrás, en la misma vía.
+  - En tramos de 3 o 4 vías (el Roca tiene tramos cuádruples) hay más.
+  - Un tren puede circular a contramano en una vía en operación especial.
+  - El SETOP 5.2.3.3 h habla de hasta dos trenes a la vez y el Anexo XII
+    pide la indicación "OTRO TREN". O sea, la norma cuenta con dos.
+- Por eso el cruce no supone "uno por sentido": sigue a cada tren por su ID
+  (hasta 4 en la tabla), sabe de qué lado viene cada uno por su rumbo desde
+  el cruce y si se acerca o se aleja, y prende OTRO TREN cuando hay dos en
+  peligro. El TDMA del prototipo admite 5 trenes por canal.
+
 18.6 Por qué PANDA principal puede dejar la barrera alta con un tren cerca
 Con la regla vieja (OR) el circuito de vía bajaba la barrera siempre que el
 tren entraba al sector, pasara lo que pasara con PANDA. Con PANDA principal,
@@ -1208,11 +1250,12 @@ que manda el tren está mal (multitrayecto, un error de software) y PANDA cree
 que el tren está a 700 m cuando está a 300, la barrera queda alta y el
 circuito ya no la baja. Es un riesgo nuevo que el sistema actual no tiene.
 Se controla con:
-- La atribución del circuito: el circuito se ocupa en un punto conocido (por
-  ejemplo 967 m). Si en ese momento PANDA no ve un tren cerca de ese punto,
-  hay inconsistencia y se cierra como siempre.
-- La plausibilidad GNSS contra IMU (fase 4) y la frescura del dato.
+- La atribución del circuito (implementada): el circuito se ocupa en un
+  punto conocido (1033 m en vía doble). Si en ese momento PANDA no ve un tren
+  a 1033 ± 100 m del lado del circuito, se cierra como siempre.
+- La plausibilidad contra el último dato confiable (implementada) y, en la
+  fase 4, contra la IMU. La frescura del dato (E-9).
 - La vigilancia de PANDA: si deja de estar operativo, el controlador sigue al
   circuito, y como PANDA solo sostiene la barrera alta con ETA de peor caso
-  mayor a 29 s, el circuito todavía tiene ese tiempo.
+  mayor a 32 s, el circuito todavía tiene ese tiempo.
 ================================================================================

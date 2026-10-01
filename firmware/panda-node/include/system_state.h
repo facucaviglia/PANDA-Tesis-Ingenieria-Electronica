@@ -32,6 +32,7 @@ struct GnssFix {
   uint16_t pDopE2;     // PDOP * 100
   uint8_t fixType;     // 0 sin fix, 2 2D, 3 3D, 4 GNSS+DR, 5 solo tiempo
   uint8_t numSv;       // Satélites usados en la solución
+  int16_t accelCms2;   // Aceleración longitudinal estimada del GNSS, INT16_MIN si no hay
   bool fixOk;          // Fix 2D/3D válido dentro de las máscaras del receptor
   bool timeValid;      // Fecha y hora UTC resueltas
 };
@@ -85,6 +86,7 @@ struct RxLog {
   uint16_t speedCms;
   uint16_t headingCdeg;
   uint16_t hAccCm;
+  int16_t accelCms2;   // INT16_MIN si el tren no la manda
   uint16_t gap;        // Beacons perdidos entre este y el anterior del mismo tren
   uint8_t result;      // RxResult
   uint8_t flags;
@@ -142,6 +144,9 @@ enum class NoteCode : uint32_t {
   SilentRelease = 16,  // value = id << 8 | 1 por tiempo, 2 por circuito de vía
   RefSaved = 17,       // value = cantidad de fixes promediados
   WatchdogTrip = 18,   // La tarea de decisión dejó de refrescar las salidas
+  TrackExplained = 19, // El circuito se ocupó y PANDA lo atribuyó a un tren. value = id
+  TrackUnexplained = 20, // El circuito quedó ocupado sin tren PANDA que lo explique. value = id o 0
+  DataInconsistent = 21, // Plausibilidad: dato del tren imposible. value = id << 8 | causa (1 pos, 2 vel, 3 acel)
 };
 
 struct LogEvent {

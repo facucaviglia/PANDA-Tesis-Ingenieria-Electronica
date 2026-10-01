@@ -14,9 +14,17 @@
 //   16   4      lonE7          no        longitud en grados * 1e7
 //   20   2      speedCms       no        velocidad en cm/s
 //   22   2      headingCdeg    no        rumbo en centésimas de grado
-//   24   2      hAccCm         no        precisión horizontal en cm
+//   24   1      hAccDm         no        precisión horizontal en dm, hacia arriba,
+//                                          255 = 25,5 m o más
+//   25   1      accel          no        aceleración en pasos de 0,02 m/s²,
+//                                          -128 = no disponible
 //   26   1      numSv          no        satélites usados
 //   27   8      tag            sí        CMAC truncado sobre los bytes 0 a 26
+//
+// Versión 2 (1-oct-2026): la precisión pasó de 2 bytes en cm a 1 byte en dm
+// para hacerle lugar a la aceleración sin agrandar el beacon. Con un byte más
+// el tiempo en el aire con SF7/500 kHz pasaría de 18,0 a 19,3 ms y se perdería
+// una de las 5 ranuras del TDMA.
 //
 // Cabecera en claro: el receptor necesita el nodeId y el contador para armar
 // el nonce y para descartar repeticiones antes de descifrar.
@@ -26,6 +34,7 @@
 // se repita, y eso lo garantiza persist::reserveCounterBlock().
 // =============================================================================
 
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 
@@ -51,9 +60,12 @@ struct BeaconData {
   int32_t lonE7;
   uint16_t speedCms;
   uint16_t headingCdeg;
-  uint16_t hAccCm;
+  uint16_t hAccCm;      // En el aire viaja en dm: al abrir vuelve múltiplo de 10
   uint8_t numSv;
+  int16_t accelCms2;    // kAccelUnknown si no hay; en el aire viaja en pasos de 2
 };
+
+constexpr int16_t kAccelUnknown = INT16_MIN;
 
 // Representación exacta en el aire.
 struct __attribute__((packed)) BeaconWire {
@@ -67,7 +79,8 @@ struct __attribute__((packed)) BeaconWire {
   int32_t lonE7;
   uint16_t speedCms;
   uint16_t headingCdeg;
-  uint16_t hAccCm;
+  uint8_t hAccDm;
+  int8_t accel2Cms2;
   uint8_t numSv;
   // Etiqueta
   uint8_t tag[8];

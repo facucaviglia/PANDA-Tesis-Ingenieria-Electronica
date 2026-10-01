@@ -49,7 +49,7 @@ const char* reasonName(CrossReason r) {
     case CrossReason::NoVerificable:
       return "tren no verificable";
     case CrossReason::ViaOcupada:
-      return "via ocupada";
+      return "via ocupada sin nodo";
     case CrossReason::FallaRadio:
       return "falla de radio";
     case CrossReason::FallaTiempo:
@@ -58,6 +58,8 @@ const char* reasonName(CrossReason r) {
       return "sin posicion cruce";
     case CrossReason::Arranque:
       return "arrancando";
+    case CrossReason::DatoInconsistente:
+      return "dato inconsistente";
   }
   return "?";
 }
@@ -130,7 +132,14 @@ struct Train {
   float closingMps;
   float etaCvS;
   float etaMinS;
+  float bearingDeg;         // Rumbo desde el cruce hacia el tren
   int32_t ageMs;
+
+  // Plausibilidad: último dato confiable y hasta cuándo se alerta
+  BeaconData anchor;
+  int64_t implausibleUntilUs;
+  // La cola ya pasó: el circuito de vía se liberó con este tren alejándose
+  bool tailCleared;
 
   // Detección de paso: mínimo de distancia en una aproximación
   bool approachSeen;
@@ -151,12 +160,14 @@ static QueueHandle_t s_statusQ = nullptr;
 // Pedidos desde otras tareas.
 static std::atomic<bool> s_reqSaveRef{false};
 static std::atomic<bool> s_reqClearRef{false};
-static std::atomic<bool> s_simTrack{false};
+static bool s_simTrackState = false;
 static std::atomic<bool> s_muted{false};
 static portMUX_TYPE s_pcRefMux = portMUX_INITIALIZER_UNLOCKED;
 static int32_t s_pcRefLat = 0;
 static int32_t s_pcRefLon = 0;
 static bool s_pcRefSet = false;
+static float s_circDistM = cfg::crossing::kTrackCircuitDistM;
+static float s_circBearingDeg = cfg::crossing::kTrackCircuitBearingDeg;
 
 void requestSaveRef() {
   s_reqSaveRef.store(true);
@@ -177,9 +188,23 @@ void setPcRef(int32_t latE7, int32_t lonE7) {
   portEXIT_CRITICAL(&s_pcRefMux);
 }
 
+void setPcCircuit(float distM, float bearingDeg) {
+  if (!cfg::sim::kAllowInjection || !(distM > 0.0f)) {
+    return;
+  }
+  portENTER_CRITICAL(&s_pcRefMux);
+  s_circDistM = distM;
+  s_circBearingDeg = bearingDeg;
+  portEXIT_CRITICAL(&s_pcRefMux);
+  Serial.printf("[CRUCE] Circuito de vía a %.0f m, rumbo %.0f grados\n", static_cast<double>(distM),
+                static_cast<double>(bearingDeg));
+}
+
 void toggleSimulatedTrack() {
-  const bool v = !s_simTrack.load();
-  s_simTrack.store(v);
+  // Lo llama la consola: una sola tarea, no hace falta atomicidad.
+  const bool v = !s_simTrackState;
+  s_simTrackState = v;
+  crossio::setSimulatedTrack(v);
   Serial.printf("[CRUCE] Circuito de vía simulado: %s%s\n", v ? "OCUPADA" : "LIBRE",
                 cfg::crossing::kTrackCircuitEnabled ? " (ignorado: la entrada física está habilitada)" : "");
 }
@@ -321,10 +346,66 @@ static void computeKinematics(Train& t, int64_t towNowUs, int32_t refLat, int32_
   const double closing = d > 1.0 ? -(dN * vN + dE * vE) / d : v;
 
   t.distM = static_cast<float>(d);
+  double bearing = std::atan2(dE, dN) * 180.0 / M_PI;
+  if (bearing < 0.0) bearing += 360.0;
+  t.bearingDeg = static_cast<float>(bearing);
   t.speedMps = static_cast<float>(v);
   t.closingMps = static_cast<float>(closing);
   t.etaCvS = closing > cfg::crossing::kMinClosingMps ? static_cast<float>(d / closing) : NAN;
   t.etaMinS = static_cast<float>(minEta(closing, d));
+}
+
+// ---------------------------------------------------------------------------
+// Plausibilidad (acción del DFMEA contra la posición errónea no marcada)
+//
+// Compara un dato nuevo con el ancla (último dato confiable del tren).
+// Devuelve 0 si es coherente, 4 si el ancla es demasiado vieja o del mismo
+// instante (se reemplaza sin comparar), o la causa del rechazo: 1 la distancia
+// recorrida está fuera de lo físicamente posible, 2 la velocidad cambió más
+// rápido de lo que el tren puede acelerar o frenar, 3 la aceleración que
+// manda el tren es imposible.
+// ---------------------------------------------------------------------------
+static constexpr uint8_t kPlausReanchor = 4;
+
+static uint8_t checkPlausibility(const BeaconData& anchor, const BeaconData& cur) {
+  using namespace cfg::crossing;
+  if (cur.accelCms2 != kAccelUnknown && std::fabs(cur.accelCms2 / 100.0f) > kPlausAccelMps2) {
+    return 3;
+  }
+  const int64_t dtUs =
+      towDiffUs(static_cast<int64_t>(cur.itowMs) * 1000, static_cast<int64_t>(anchor.itowMs) * 1000);
+  const double dt = dtUs / 1e6;
+  if (dt <= 0.0 || dt > kPlausAnchorMaxAgeS) {
+    return kPlausReanchor;
+  }
+  constexpr double kDegE7ToRad = 1e-7 * M_PI / 180.0;
+  constexpr double kR = 6371008.8;
+  const double cosLat = std::cos(anchor.latE7 * kDegE7ToRad);
+  const double dN = static_cast<double>(cur.latE7 - anchor.latE7) * kDegE7ToRad * kR;
+  const double dE = static_cast<double>(cur.lonE7 - anchor.lonE7) * kDegE7ToRad * kR * cosLat;
+  const double moved = std::hypot(dN, dE);
+  const double v0 = anchor.speedCms / 100.0;
+  // Envolvente: frenando de emergencia hasta detenerse, o acelerando al máximo.
+  const double tStop = v0 / kPlausBrakeMps2;
+  const double dMin = dt >= tStop ? v0 * v0 / (2.0 * kPlausBrakeMps2) : v0 * dt - 0.5 * kPlausBrakeMps2 * dt * dt;
+  const double dMax = maxDistance(v0, dt);
+  const double hAcc = std::max(anchor.hAccCm, cur.hAccCm) / 100.0;
+  const double tol = kPlausPosTolM + kPlausHAccFactor * hAcc;
+  if (moved < dMin - tol || moved > dMax + tol) {
+    return 1;
+  }
+  const double v1 = cur.speedCms / 100.0;
+  if (std::fabs(v1 - v0) > kPlausAccelMps2 * dt + kPlausSpeedTolMps) {
+    return 2;
+  }
+  return 0;
+}
+
+// El tren está del lado del circuito (rumbo negativo = no se verifica).
+static bool sideMatches(float trainBearing, float circuitBearing) {
+  if (circuitBearing < 0.0f) return true;
+  const float diff = std::fabs(std::fmod(trainBearing - circuitBearing + 540.0f, 360.0f) - 180.0f);
+  return diff <= cfg::crossing::kSideTolDeg;
 }
 
 static Train* findTrain(uint16_t id) {
@@ -357,6 +438,7 @@ static Train& addTrain(uint16_t id, int64_t now) {
   slot->distM = NAN;
   slot->etaCvS = NAN;
   slot->etaMinS = NAN;
+  slot->bearingDeg = NAN;
   slot->ageMs = INT32_MIN;
   logNote(NoteCode::TrainNew, id);
   Serial.printf("[CRUCE] Tren nuevo %04X\n", id);
@@ -373,6 +455,7 @@ static int severity(const Train& t) {
       return 4;
     case CrossReason::SinPosicion:
     case CrossReason::NoVerificable:
+    case CrossReason::DatoInconsistente:
       return 3;
     case CrossReason::TrenAproxima:
       return 2;
@@ -398,7 +481,8 @@ static void logDecision(const Train& t, const CrossingStatus& st) {
   d.phase = static_cast<uint8_t>(t.phase);
   d.alerting = t.alerting ? 1 : 0;
   d.outputs = static_cast<uint8_t>((st.pandaLibre ? 1 : 0) | (st.pandaOk ? 2 : 0) | (st.pedestrian ? 4 : 0) |
-                                   (st.trackOccupied ? 8 : 0) | (st.barrierDown ? 16 : 0));
+                                   (st.trackOccupied ? 8 : 0) | (st.closeRequest ? 16 : 0) |
+                                   (st.trackExplained ? 32 : 0) | (st.otherTrain ? 64 : 0));
   logPush(rec);
 }
 
@@ -449,6 +533,19 @@ static void decisionTask(void*) {
       t->lastAuthUs = ab.tEndUs;
       const bool fix = (ab.data.flags & BeaconFlag::kFixOk) != 0;
       if (ab.result == static_cast<uint8_t>(RxResult::Ok) && fix) {
+        const uint8_t cause = t->haveValid ? checkPlausibility(t->anchor, ab.data) : kPlausReanchor;
+        if (cause == 0 || cause == kPlausReanchor) {
+          t->anchor = ab.data;
+        } else {
+          // Se cuentan todos los rechazos, pero se avisa solo al empezar cada
+          // episodio para no llenar la consola y la microSD a 10 Hz.
+          if (ab.tEndUs >= t->implausibleUntilUs) {
+            logNote(NoteCode::DataInconsistent, (static_cast<uint32_t>(t->id) << 8) | cause);
+            Serial.printf("[CRUCE] Dato inconsistente del tren %04X (causa %u)\n", t->id, cause);
+          }
+          t->implausibleUntilUs = ab.tEndUs + static_cast<int64_t>(cfg::crossing::kPlausHoldMs) * 1000;
+          ++st.inconsistencies;
+        }
         t->last = ab.data;
         t->lastValidUs = ab.tEndUs;
         t->haveValid = true;
@@ -529,7 +626,7 @@ static void decisionTask(void*) {
     const bool haveRef = st.refSource != RefSource::Ninguna;
 
     // --- 4. Circuito de vía -------------------------------------------------
-    const bool trackRaw = cfg::crossing::kTrackCircuitEnabled ? crossio::readTrackOccupied() : s_simTrack.load();
+    const bool trackRaw = crossio::trackOccupied();
     trackStable = (trackRaw == trackRawPrev) ? trackStable + 1 : 0;
     trackRawPrev = trackRaw;
     const bool trackWas = st.trackOccupied;
@@ -540,12 +637,63 @@ static void decisionTask(void*) {
     }
     const bool trackRose = !trackWas && st.trackOccupied;
     const bool trackFell = trackWas && !st.trackOccupied;
-    if (trackRose && st.pandaOk && st.pandaLibre) {
-      // La vía detectó un tren mientras PANDA decía vía libre: o el tren no
-      // tiene nodo, o PANDA no lo vio. Es la métrica clave de validación.
-      ++st.trackWithoutPanda;
-      logNote(NoteCode::TrackWithoutPanda, st.haveTrain ? st.trainId : 0);
-      Serial.println("[CRUCE] ATENCION: vía ocupada con PANDA en vía libre");
+
+    float circDist;
+    float circBearing;
+    portENTER_CRITICAL(&s_pcRefMux);
+    circDist = s_circDistM;
+    circBearing = s_circBearingDeg;
+    portEXIT_CRITICAL(&s_pcRefMux);
+    st.circuitDistM = circDist;
+    st.circuitBearingDeg = circBearing;
+
+    if (trackRose) {
+      // Atribución: el circuito se ocupa cuando el frente de un tren pasa la
+      // junta de aproximación. Si PANDA sigue en ese instante un tren con dato
+      // fresco y coherente, que se acerca, a esa distancia y de ese lado, la
+      // ocupación es de ese tren. Si no, es un tren que PANDA no ve.
+      const int64_t linkTimeoutUs = static_cast<int64_t>(cfg::beacon::kLinkTimeoutMs) * 1000;
+      Train* best = nullptr;
+      float bestErr = INFINITY;
+      for (auto& t : s_trains) {
+        if (!t.used || !t.haveValid || now - t.lastValidUs > linkTimeoutUs) continue;
+        if (now < t.implausibleUntilUs || std::isnan(t.distM)) continue;
+        if (t.closingMps <= cfg::crossing::kMinClosingMps) continue;
+        const float err = std::fabs(t.distM - circDist);
+        if (err <= cfg::crossing::kAttributionTolM && sideMatches(t.bearingDeg, circBearing) && err < bestErr) {
+          best = &t;
+          bestErr = err;
+        }
+      }
+      st.trackExplained = best != nullptr;
+      st.trackTrain = best != nullptr ? best->id : 0;
+      if (best != nullptr) {
+        logNote(NoteCode::TrackExplained, best->id);
+        Serial.printf("[CRUCE] Circuito ocupado por el tren %04X (a %.0f m, error %.0f m)\n", best->id,
+                      static_cast<double>(best->distM), static_cast<double>(bestErr));
+      } else {
+        // La vía detectó un tren que PANDA no sigue: tren sin nodo o PANDA no
+        // lo vio. Cierra como siempre. Es la métrica clave de validación.
+        logNote(NoteCode::TrackUnexplained, 0);
+        if (st.pandaOk && st.pandaLibre) {
+          ++st.trackWithoutPanda;
+          logNote(NoteCode::TrackWithoutPanda, st.haveTrain ? st.trainId : 0);
+        }
+        Serial.println("[CRUCE] Circuito ocupado SIN tren PANDA: cierra como siempre");
+      }
+    }
+    if (trackFell && st.trackExplained) {
+      // El circuito se liberó con el tren atribuido ya alejándose: la cola pasó
+      // la junta de salida. Es la misma condición con la que hoy sube la
+      // barrera, así que PANDA no la sostiene más por ese tren.
+      Train* bound = findTrain(st.trackTrain);
+      if (bound != nullptr && bound->closingMps < -cfg::crossing::kMinClosingMps) {
+        bound->tailCleared = true;
+      }
+    }
+    if (trackFell || !st.trackOccupied) {
+      st.trackExplained = false;
+      st.trackTrain = 0;
     }
 
     // --- 5. Evaluación de cada tren -----------------------------------------
@@ -564,8 +712,10 @@ static void decisionTask(void*) {
         t.trackSeenOccupied = false;
 
         const bool relevant = t.distM <= cfg::crossing::kRelevantRadiusM;
-        const bool inZone = t.distM <= cfg::crossing::kOccupiedRadiusM;
-        const bool danger = relevant && (inZone || t.etaMinS <= cfg::crossing::kAlertEtaS);
+        if (t.closingMps > cfg::crossing::kMinClosingMps) t.tailCleared = false;
+        const bool inZone = t.distM <= cfg::crossing::kOccupiedRadiusM && !t.tailCleared;
+        const bool implausible = now < t.implausibleUntilUs;
+        const bool danger = implausible || (relevant && (inZone || t.etaMinS <= cfg::crossing::kAlertEtaS));
 
         if (inZone) {
           t.phase = TrainPhase::EnZona;
@@ -579,12 +729,15 @@ static void decisionTask(void*) {
 
         if (danger) {
           t.alerting = true;
-          t.alertReason = inZone ? CrossReason::TrenEnZona : CrossReason::TrenAproxima;
+          t.alertReason = implausible ? CrossReason::DatoInconsistente
+                          : inZone    ? CrossReason::TrenEnZona
+                                      : CrossReason::TrenAproxima;
           t.clearSinceUs = 0;
         } else if (t.alerting) {
-          // Fuera de peligro: se apaga recién después de kClearHoldMs seguidos.
+          // Fuera de peligro: se apaga recién después de kClearHoldMs seguidos,
+          // salvo que el circuito ya confirmó que pasó la cola.
           if (t.clearSinceUs == 0) t.clearSinceUs = now;
-          if (now - t.clearSinceUs >= static_cast<int64_t>(cfg::crossing::kClearHoldMs) * 1000) {
+          if (t.tailCleared || now - t.clearSinceUs >= static_cast<int64_t>(cfg::crossing::kClearHoldMs) * 1000) {
             t.alerting = false;
             t.clearSinceUs = 0;
           }
@@ -670,14 +823,33 @@ static void decisionTask(void*) {
       }
     }
 
-    // --- 6. Estado del cruce: cierre en OR, apertura en AND ------------------
+    // --- 6. Atribución vigente del circuito ------------------------------------
+    // La ocupación sigue explicada mientras el tren al que se atribuyó exista
+    // y no se haya alejado del cruce más allá del radio de ocupación (su cola
+    // ya pasó). Si el circuito sigue ocupado después, hay otra cosa en la vía.
+    if (st.trackOccupied && st.trackExplained) {
+      const Train* bound = findTrain(st.trackTrain);
+      const bool gone = bound == nullptr ||
+                        (bound->phase == TrainPhase::Alejandose && bound->distM > cfg::crossing::kOccupiedRadiusM);
+      if (gone) {
+        st.trackExplained = false;
+        logNote(NoteCode::TrackUnexplained, st.trackTrain);
+        Serial.printf("[CRUCE] El tren %04X ya pasó y el circuito sigue ocupado: cierra\n", st.trackTrain);
+        st.trackTrain = 0;
+      }
+    }
+    const bool trackUnexplained = st.trackOccupied && !st.trackExplained;
+
+    // --- 7. Estado del cruce: PANDA principal, circuito de respaldo ------------
     const Train* principal = nullptr;
     uint8_t count = 0;
+    uint8_t alerting = 0;
     bool anyAlert = false;
     for (const auto& t : s_trains) {
       if (!t.used) continue;
       ++count;
       anyAlert |= t.alerting;
+      if (t.alerting) ++alerting;
       if (principal == nullptr || severity(t) > severity(*principal) ||
           (severity(t) == severity(*principal) && t.distM < principal->distM)) {
         principal = &t;
@@ -703,7 +875,7 @@ static void decisionTask(void*) {
       state = CrossState::NoSeguro;
       reason = principal->alertReason;
       reasonTrain = principal->id;
-    } else if (st.trackOccupied) {
+    } else if (trackUnexplained) {
       state = CrossState::NoSeguro;
       reason = CrossReason::ViaOcupada;
     } else {
@@ -711,17 +883,29 @@ static void decisionTask(void*) {
     }
 
     st.pandaOk = (state == CrossState::Apagado || state == CrossState::NoSeguro);
-    st.pandaLibre = st.pandaOk && !anyAlert;
+    st.pandaLibre = st.pandaOk && state == CrossState::Apagado;
     st.pedestrian = (state != CrossState::Apagado);
     st.muted = s_muted.load();
-    // Controlador de barrera de referencia. En el producto vive en el
-    // controlador de la barrera, no en PANDA. Acá se calcula para mostrar y
-    // registrar que el invariante se cumple:
-    //   PANDA operativo:    baja si PANDA pide cierre O la vía está ocupada
-    //   PANDA no operativo: baja si la vía está ocupada (comportamiento actual)
-    st.barrierDown = st.pandaOk ? (!st.pandaLibre || st.trackOccupied) : st.trackOccupied;
+    st.alertingTrains = alerting;
+    // OTRO TREN (Anexo XII): dos trenes en peligro, o uno más una ocupación
+    // del circuito que no es suya.
+    st.otherTrain = alerting >= 2 || (alerting >= 1 && trackUnexplained);
+    // Regla del controlador de barrera (en el producto vive en el controlador
+    // existente, en el prototipo en la maqueta de crossing_io):
+    //   PANDA operativo:    baja si PANDA pide cierre
+    //   PANDA no operativo: baja si el circuito de vía está ocupado (como hoy)
+    st.closeRequest = st.pandaOk ? !st.pandaLibre : st.trackOccupied;
+    if (cfg::crossing::kBarrierOnBoard) {
+      const crossio::BarrierPhase bp = crossio::barrierPhase();
+      st.barrierPhase = static_cast<uint8_t>(bp);
+      st.barrierDown = bp != crossio::BarrierPhase::Arriba && bp != crossio::BarrierPhase::Fono;
+    } else {
+      st.barrierPhase = 0;
+      st.barrierDown = st.closeRequest;
+    }
 
-    crossio::apply({st.pandaLibre, st.pandaOk, st.pedestrian, state == CrossState::NoSeguro && !st.muted});
+    crossio::apply({st.pandaLibre, st.pandaOk, st.pedestrian, state == CrossState::NoSeguro, st.otherTrain,
+                    st.muted});
 
     const bool changed = (state != st.state) || (reason != st.reason) || (reasonTrain != st.reasonTrain);
     st.state = state;
@@ -750,7 +934,7 @@ static void decisionTask(void*) {
     }
     st.watchdogTrips = crossio::watchdogTrips();
 
-    // --- 7. Registro -------------------------------------------------------
+    // --- 8. Registro -------------------------------------------------------
     for (auto& t : s_trains) {
       if (t.used && (t.newValid || (changed && &t == principal))) {
         logDecision(t, st);
@@ -782,6 +966,7 @@ void requestClearRef() {}
 void setPcRef(int32_t, int32_t) {}
 void toggleSimulatedTrack() {}
 void toggleMute() {}
+void setPcCircuit(float, float) {}
 }  // namespace crossing
 
 #endif  // PANDA_ROLE_CRUCE

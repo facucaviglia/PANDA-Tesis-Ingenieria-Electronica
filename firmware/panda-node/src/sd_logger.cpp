@@ -112,6 +112,15 @@ void formatOptionalInt(char* out, size_t size, int32_t v) {
   }
 }
 
+// Aceleración en cm/s² a m/s². INT16_MIN se escribe como campo vacío.
+void formatAccel(char* out, size_t size, int16_t cms2) {
+  if (cms2 == INT16_MIN) {
+    out[0] = '\0';
+  } else {
+    snprintf(out, size, "%.2f", cms2 / 100.0);
+  }
+}
+
 // Busca el número de sesión más alto en la raíz y devuelve el siguiente.
 uint32_t nextSessionNumber() {
   uint32_t maxN = 0;
@@ -143,7 +152,7 @@ bool openSession() {
   bool ok = true;
   ok &= s_gnss.open(base + "/gnss.csv",
                     "t_us,itow_ms,unix_s,fix_type,fix_ok,num_sv,lat_deg,lon_deg,hmsl_m,speed_mps,head_deg,"
-                    "hacc_m,sacc_mps,headacc_deg,pdop\n");
+                    "hacc_m,sacc_mps,headacc_deg,pdop,acel_mps2\n");
   ok &= s_imu.open(base + "/imu.csv", "t_us,ax_mps2,ay_mps2,az_mps2,gx_dps,gy_dps,gz_dps\n");
   ok &= s_events.open(base + "/events.csv", "t_us,tipo,n,valor\n");
 #if defined(PANDA_ROLE_TREN)
@@ -152,10 +161,10 @@ bool openSession() {
 #elif defined(PANDA_ROLE_CRUCE)
   ok &= s_link.open(base + "/rx.csv",
                     "t_us,resultado,node_id,counter,itow_ms,age_ms,gap,rssi_dbm,snr_db,ferr_hz,flags,lat_deg,"
-                    "lon_deg,speed_mps,head_deg,hacc_m,num_sv,dist_m,tiempo,perfil,origen\n");
+                    "lon_deg,speed_mps,head_deg,hacc_m,num_sv,dist_m,tiempo,perfil,origen,acel_mps2\n");
   ok &= s_decision.open(base + "/decision.csv",
                         "t_us,estado,motivo,tren,fase,alerta,dist_m,vel_mps,acerc_mps,eta_cv_s,eta_min_s,edad_ms,"
-                        "panda_libre,panda_ok,senal,via_ocupada,barrera_baja\n");
+                        "panda_libre,panda_ok,senal,via_ocupada,pedido_cierre,via_explicada,otro_tren\n");
 #endif
   if (ok) {
     g_stats.logSession.store(n);
@@ -199,11 +208,13 @@ bool writeRecord(const LogRecord& r) {
       char lon[16];
       formatE7(lat, sizeof(lat), f.latE7);
       formatE7(lon, sizeof(lon), f.lonE7);
-      return s_gnss.appendf("%lld,%lu,%lu,%u,%u,%u,%s,%s,%.3f,%.3f,%.5f,%.3f,%.3f,%.5f,%.2f\n",
+      char acc[12];
+      formatAccel(acc, sizeof(acc), f.accelCms2);
+      return s_gnss.appendf("%lld,%lu,%lu,%u,%u,%u,%s,%s,%.3f,%.3f,%.5f,%.3f,%.3f,%.5f,%.2f,%s\n",
                             static_cast<long long>(f.tRxUs), static_cast<unsigned long>(f.itowMs),
                             static_cast<unsigned long>(f.unixS), f.fixType, f.fixOk ? 1u : 0u, f.numSv, lat, lon,
                             f.hMslMm / 1000.0, f.gSpeedMms / 1000.0, f.headMotE5 / 1e5, f.hAccMm / 1000.0,
-                            f.sAccMms / 1000.0, f.headAccE5 / 1e5, f.pDopE2 / 100.0);
+                            f.sAccMms / 1000.0, f.headAccE5 / 1e5, f.pDopE2 / 100.0, acc);
     }
     case LogType::Imu: {
       const ImuSample& s = r.imu;
@@ -243,13 +254,15 @@ bool writeRecord(const LogRecord& r) {
       } else {
         snprintf(dist, sizeof(dist), "%.1f", static_cast<double>(x.distM));
       }
-      return s_link.appendf("%lld,%s,%u,%lu,%lu,%s,%u,%.1f,%.2f,%.0f,%u,%s,%s,%.2f,%.2f,%.2f,%u,%s,%u,%u,%s\n",
+      char acc[12];
+      formatAccel(acc, sizeof(acc), x.accelCms2);
+      return s_link.appendf("%lld,%s,%u,%lu,%lu,%s,%u,%.1f,%.2f,%.0f,%u,%s,%s,%.2f,%.2f,%.2f,%u,%s,%u,%u,%s,%s\n",
                             static_cast<long long>(x.tEndUs), radiolink::rxResultName(x.result), x.nodeId,
                             static_cast<unsigned long>(x.counter), static_cast<unsigned long>(x.itowMs), age, x.gap,
                             static_cast<double>(x.rssiDbm), static_cast<double>(x.snrDb),
                             static_cast<double>(x.freqErrHz), x.flags, lat, lon, x.speedCms / 100.0,
                             x.headingCdeg / 100.0, x.hAccCm / 100.0, x.numSv, dist, x.timeQ, x.profile,
-                            x.injected ? "USB" : "RADIO");
+                            x.injected ? "USB" : "RADIO", acc);
     }
     case LogType::Decision: {
       const DecisionLog& d = r.dec;
@@ -261,14 +274,15 @@ bool writeRecord(const LogRecord& r) {
       }
       char age[12];
       formatOptionalInt(age, sizeof(age), d.ageMs);
-      return s_decision.appendf("%lld,%s,%s,%04X,%s,%u,%.1f,%.2f,%.2f,%s,%.2f,%s,%u,%u,%u,%u,%u\n",
+      return s_decision.appendf("%lld,%s,%s,%04X,%s,%u,%.1f,%.2f,%.2f,%s,%.2f,%s,%u,%u,%u,%u,%u,%u,%u\n",
                                 static_cast<long long>(d.tUs), crossing::stateName(static_cast<CrossState>(d.state)),
                                 crossing::reasonName(static_cast<CrossReason>(d.reason)), d.trainId,
                                 crossing::phaseName(static_cast<TrainPhase>(d.phase)), d.alerting,
                                 static_cast<double>(d.distM), static_cast<double>(d.speedMps),
                                 static_cast<double>(d.closingMps), eta, static_cast<double>(d.etaMinS), age,
                                 (d.outputs & 1) ? 1u : 0u, (d.outputs & 2) ? 1u : 0u, (d.outputs & 4) ? 1u : 0u,
-                                (d.outputs & 8) ? 1u : 0u, (d.outputs & 16) ? 1u : 0u);
+                                (d.outputs & 8) ? 1u : 0u, (d.outputs & 16) ? 1u : 0u, (d.outputs & 32) ? 1u : 0u,
+                                (d.outputs & 64) ? 1u : 0u);
     }
   }
   return true;

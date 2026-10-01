@@ -12,15 +12,23 @@
 //          llegar acelerando al máximo con un perfil de tracción real
 //          (aceleración constante, después potencia constante, con tope en
 //          la velocidad de la línea).
-//      El ETA mínimo es el que decide. Así un tren detenido cerca o uno que
-//      arranca nunca toman desprevenido al cruce.
-//   3. Resuelve el estado del cruce con cierre en OR y apertura en AND (ver
+//      Así un tren detenido cerca o uno que arranca nunca toman
+//      desprevenido al cruce.
+//      El ETA mínimo es el que decide, con el umbral del ciclo de barrera de
+//      ADIF (fonoluminosa + bajada + despejamiento + margen).
+//   3. Verifica la plausibilidad de cada dato nuevo contra el anterior.
+//   4. Atribuye cada ocupación del circuito de vía a un tren seguido, o la
+//      trata como un tren sin nodo.
+//   5. Resuelve el estado del cruce con PANDA como sistema principal (ver
 //      cfg::crossing en config.h) y maneja las salidas físicas.
 //
 // Invariante: ninguna falla de PANDA puede apagar la señal ni dar vía libre.
-// Todo lo que PANDA no puede asegurar es NO SEGURO, y si el nodo mismo no está
-// sano se declara no operativo para que la barrera vuelva a su comportamiento
-// actual (solo circuito de vía).
+// Todo lo que PANDA no puede asegurar es NO SEGURO, una ocupación del circuito
+// que PANDA no explica cierra como siempre, y si el nodo mismo no está sano se
+// declara no operativo para que la barrera vuelva a su comportamiento actual
+// (solo circuito de vía). Como PANDA solo sostiene la barrera alta con un ETA
+// de peor caso mayor al umbral, si se cae en ese momento el circuito todavía
+// tiene al menos ese tiempo.
 //
 // La distancia es en línea recta. En una vía curva es menor que la distancia
 // sobre la vía, así que el ETA sale más corto y la alerta más temprana: el
@@ -43,11 +51,12 @@ enum class CrossReason : uint8_t {
   SinDatos,         // Tren en aproximación que dejó de mandar datos válidos
   SinPosicion,      // Tren que se escucha pero sin fix
   NoVerificable,    // Tren que se escucha pero sin tiempo para verificar frescura
-  ViaOcupada,       // Circuito de vía ocupado
+  ViaOcupada,       // Circuito de vía ocupado sin un tren PANDA que lo explique
   FallaRadio,
   FallaTiempo,      // El cruce no tiene tiempo GPS: no puede validar nada
   FallaReferencia,  // No hay posición del cruce
   Arranque,
+  DatoInconsistente,  // Plausibilidad: posición, velocidad o aceleración imposibles
 };
 
 enum class TrainPhase : uint8_t {
@@ -70,8 +79,16 @@ struct CrossingStatus {
   bool pandaLibre;
   bool pandaOk;
   bool pedestrian;
-  bool barrierDown;         // Controlador de barrera de referencia (simulado)
+  bool closeRequest;        // Lo que se le pide al controlador de barrera
+  bool barrierDown;         // Brazo bajando o abajo (maqueta) o pedido de cierre
+  uint8_t barrierPhase;     // crossio::BarrierPhase de la maqueta
+  bool otherTrain;          // Más de un tren en peligro (OTRO TREN)
+  uint8_t alertingTrains;
   bool trackOccupied;
+  bool trackExplained;      // La ocupación del circuito la explica un tren seguido
+  uint16_t trackTrain;      // Tren al que se atribuyó, 0 si ninguno
+  float circuitDistM;       // Geometría del circuito en uso
+  float circuitBearingDeg;
   bool trackEnabled;        // Entrada física habilitada (si no, se simula)
   bool muted;
 
@@ -99,6 +116,7 @@ struct CrossingStatus {
   uint32_t trackWithoutPanda; // Vía ocupada con PANDA diciendo libre
   uint32_t silentReleases;
   uint32_t watchdogTrips;
+  uint32_t inconsistencies;   // Datos rechazados por plausibilidad
 };
 
 namespace crossing {
@@ -117,6 +135,9 @@ void requestClearRef();
 void setPcRef(int32_t latE7, int32_t lonE7);
 void toggleSimulatedTrack();
 void toggleMute();
+// Geometría del circuito de vía en RAM (banco): distancia a la junta de
+// aproximación y rumbo desde el cruce hacia ella. Rumbo negativo = sin lado.
+void setPcCircuit(float distM, float bearingDeg);
 
 const char* stateName(CrossState s);
 const char* reasonName(CrossReason r);

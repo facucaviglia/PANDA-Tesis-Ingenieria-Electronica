@@ -133,8 +133,9 @@ def cmac(aes, msg):
 # ---------------------------------------------------------------------------
 # Beacon, portado de src/beacon.cpp
 # ---------------------------------------------------------------------------
-BEACON_FMT = "<BHIBIiiHHHB"  # sin la etiqueta de 8 bytes
-VER_TYPE = (1 << 4) | 1
+BEACON_FMT = "<BHIBIiiHHBbB"  # sin la etiqueta de 8 bytes (versión 2 del beacon)
+VER_TYPE = (2 << 4) | 1
+ACCEL_UNKNOWN = -128          # valor en el aire de "aceleración no disponible"
 ENC_KEY = bytes([0x50, 0x41, 0x4E, 0x44, 0x41, 0x2D, 0x45, 0x4E, 0x43, 0x2D, 0x4B, 0x45, 0x59, 0x2D, 0x30, 0x31])
 MAC_KEY = bytes([0x50, 0x41, 0x4E, 0x44, 0x41, 0x2D, 0x4D, 0x41, 0x43, 0x2D, 0x4B, 0x45, 0x59, 0x2D, 0x30, 0x31])
 
@@ -149,10 +150,23 @@ def _ciphers():
     return _CACHE["enc"], _CACHE["mac"]
 
 
-def seal(node_id, counter, flags, itow, lat_e7, lon_e7, speed_cms, head_cdeg, hacc_cm, num_sv):
+def hacc_to_wire(hacc_cm):
+    """Precisión horizontal en decímetros, redondeada hacia arriba, tope 255 (25,5 m o más)."""
+    return min(255, (max(0, hacc_cm) + 9) // 10)
+
+
+def accel_to_wire(accel_cms2):
+    """Aceleración en pasos de 2 cm/s² (0,02 m/s²), redondeo simétrico, tope más o menos 127."""
+    if accel_cms2 is None:
+        return ACCEL_UNKNOWN
+    w = (accel_cms2 + 1) // 2 if accel_cms2 >= 0 else -((-accel_cms2 + 1) // 2)
+    return max(-127, min(127, w))
+
+
+def seal(node_id, counter, flags, itow, lat_e7, lon_e7, speed_cms, head_cdeg, hacc_cm, num_sv, accel_cms2=None):
     enc, mac = _ciphers()
     raw = struct.pack(BEACON_FMT, VER_TYPE, node_id, counter, flags, itow, lat_e7, lon_e7, speed_cms, head_cdeg,
-                      hacc_cm, num_sv)
+                      hacc_to_wire(hacc_cm), accel_to_wire(accel_cms2), num_sv)
     nonce = raw[:7] + bytes(9)
     body = raw[:7] + ctr_xor(enc, nonce, raw[7:27])
     return body + cmac(mac, body)[:8]
@@ -200,11 +214,15 @@ def main():
     ok &= check("primer bloque", ctr_xor(aes, bytes.fromhex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"), m[:16]),
                 bytes.fromhex("874d6191b620e3261bef6864990db6ce"))
 
-    print("Beacon de 35 bytes")
-    fields = (0x3FA2, 123456, 0x07, 345600100, -346032145, -585012345, 1523, 27350, 180, 14)
+    print("Beacon de 35 bytes (versión 2)")
+    fields = (0x3FA2, 123456, 0x07, 345600100, -346032145, -585012345, 1523, 27350, 180, 14, -36)
     pkt = seal(*fields)
     ok &= check("largo 35", bytes([len(pkt)]), bytes([35]))
-    ok &= check("ida y vuelta", bytes(str(open_beacon(pkt)), "ascii"), bytes(str((VER_TYPE,) + fields), "ascii"))
+    wire = (VER_TYPE,) + fields[:8] + (hacc_to_wire(fields[8]), accel_to_wire(fields[10]), fields[9])
+    ok &= check("ida y vuelta", bytes(str(open_beacon(pkt)), "ascii"), bytes(str(wire), "ascii"))
+    ok &= check("hAcc 180 cm -> 18 dm", bytes([hacc_to_wire(180)]), bytes([18]))
+    ok &= check("aceleración -36 cm/s2 -> -18", bytes([accel_to_wire(-36) & 0xFF]), bytes([(-18) & 0xFF]))
+    ok &= check("aceleración desconocida", bytes([accel_to_wire(None) & 0xFF]), bytes([0x80]))
     tampered = bytearray(pkt)
     tampered[12] ^= 0x01
     ok &= check("rechaza un bit alterado", bytes([open_beacon(bytes(tampered)) is None]), bytes([True]))

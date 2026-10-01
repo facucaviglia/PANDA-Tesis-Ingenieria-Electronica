@@ -5,10 +5,12 @@ Un solo código con varios roles, elegidos al compilar.
 
 | Fase | Rol | Estado |
 |---|---|---|
-| 1 | `registrador`: GNSS 10 Hz + IMU a microSD, posición en vivo a Traccar | Lista |
-| 2 | `tren` y `cruce`: enlace LoRa, beacon de 35 bytes cifrado y autenticado, TDMA | Lista |
-| 3 | `cruce`: lógica de decisión, ETA, estados, circuito de vía, salidas, simulador | **Lista** |
-| 4 | IMU: plausibilidad del GNSS, quieto o en marcha, huecos cortos | Pendiente |
+| 1 | `registrador`: GNSS 10 Hz + IMU a microSD (Traccar como TODO) | Lista |
+| 2 | `tren` y `cruce`: enlace LoRa, beacon de 35 bytes cifrado y autenticado con aceleración, TDMA | Lista |
+| 3 | `cruce`: PANDA principal con el ciclo de ADIF, atribución del circuito de vía, plausibilidad, OTRO TREN, maqueta de barrera, simulador | **Lista** |
+| 4 | IMU: plausibilidad del GNSS contra la IMU, quieto o en marcha, huecos cortos | Pendiente |
+
+Nada de esto corrió todavía en una placa: compila y la lógica está verificada contra el modelo en Python.
 
 ## 1. Qué hace falta
 
@@ -67,48 +69,75 @@ pio run -e tren -t upload -t monitor
 
 El RSSI y el SNR a 1 m con 2 dBm deberían estar muy altos (RSSI entre -30 y -45 dBm). Si están bajos, revisá las antenas.
 
-## 4 bis. Nodo cruce: lógica de decisión (fase 3)
+## 4 bis. Nodo cruce: lógica de decisión
+
+PANDA es el **sistema principal** del cruce y el circuito de vía queda de **respaldo**. Línea piloto: **Roca** (CSR, 25 kV). Tiempos de ADIF: Anexo XII del pliego de barreras automáticas del Roca, que toma la Tabla I del SETOP 7/81.
 
 ### Estados
 
-| Estado | Señal peatonal | Relé PANDA libre | Relé PANDA operativo | Sonido |
+| Estado | Señal peatonal | Contacto PANDA libre | Contacto PANDA operativo | Sonido |
 |---|---|---|---|---|
-| **APAGADO** | apagada (no afirma nada, nunca hay verde) | energizado | energizado | no |
-| **NO SEGURO** | encendida | desenergizado = pedido de cierre | energizado | 1 toque por segundo |
-| **FALLA** | encendida | desenergizado | desenergizado = ignorar a PANDA | no |
-| **INICIANDO** (3 s) | encendida (prueba de lámpara) | desenergizado | desenergizado | no |
+| **APAGADO** | apagada (no afirma nada, nunca hay verde) | cerrado | cerrado | no |
+| **NO SEGURO** | encendida | abierto = pedido de cierre | cerrado | 1 toque por segundo (2 con OTRO TREN) |
+| **FALLA** | encendida | abierto | abierto = ignorar a PANDA | no |
+| **INICIANDO** (3 s) | encendida (prueba de lámpara) | abierto | abierto | no |
 
-### Cuándo es NO SEGURO (cierre en OR)
+### Cuándo es NO SEGURO
 
-Basta con una sola de estas condiciones. El cruce se apaga recién cuando no se cumple ninguna (apertura en AND):
+Basta con una sola de estas condiciones. El cruce se apaga recién cuando no se cumple ninguna:
 
-1. **Tren aproxima**: su **ETA mínimo** es de 25 s o menos (E-8b, `kAlertEtaS`).
-2. **Tren en zona**: está a menos de 280 m. La antena GNSS va en un solo coche, y el resto de una formación de hasta 250 m puede estar sobre el cruce.
-3. **SIN DATOS**: un tren que se acercaba o estaba en zona dejó de mandar datos válidos por más de 1 s (E-9). Un tren lejos que se calla pasa a SIN DATOS si, en el peor caso, pudo haber entrado en la zona de alerta durante el silencio.
-4. **Tren sin posición o no verificable**: se lo escucha, pero sin fix o sin tiempo para verificar que el dato sea fresco.
-5. **Vía ocupada**: el circuito de vía detecta un tren.
+1. **Tren aproxima**: su **ETA de peor caso** es de 32 s o menos (E-8b, `kAlertEtaS`).
+2. **Tren en zona**: está a menos de 240 m (formación del Roca de hasta 206 m más margen). El nodo va en la **cabina delantera**, así que después del paso el resto del tren sigue sobre el cruce.
+3. **SIN DATOS**: un tren que se acercaba o estaba en zona dejó de mandar datos válidos por más de 1 s (E-9), o un tren lejos que en el peor caso pudo haber entrado en la zona de alerta durante el silencio.
+4. **Tren sin posición, no verificable o con dato inconsistente** (plausibilidad).
+5. **Vía ocupada sin nodo**: el circuito de vía se ocupó y PANDA no sigue al tren que lo ocupó. Cierra como siempre.
 
 Pasa a **FALLA** si el nodo no puede cumplir su función: la tarea de radio no responde, no tiene tiempo GPS propio o no tiene la posición del cruce.
 
-### ETA mínimo
+### Umbral: el ciclo de barrera de ADIF
 
-Es el menor tiempo en que el tren *podría* llegar si acelerara al máximo con un perfil de tracción real: 1,0 m/s² hasta 40 km/h, después potencia constante y un tope en la velocidad de la línea (120 km/h). La distancia es en línea recta: en una vía curva sale más corta que la real y la alerta sale antes, así que el error va del lado seguro.
-
-| Velocidad | Alerta desde | Anticipación real a velocidad constante |
+| Parte | Tiempo | Fuente |
 |---|---|---|
-| detenido | 290 m | (puede arrancar) |
-| 40 km/h | 489 m | 44 s |
-| 60 km/h | 583 m | 35 s |
-| 100 km/h | 792 m | 28,5 s |
-| 120 km/h | 833 m | 25,0 s |
+| Fonoluminosa (luces y campana antes de bajar) | 7 s | Anexo XII, punto 20 |
+| Bajada del brazo (peor caso del pliego, 5 a 10 s) | 10 s | Anexo XII, punto 20 |
+| Despejamiento (brazo abajo hasta que llega el tren), vía doble | 14 s | Anexo XII y Tabla I del SETOP (12, 14 o 16 s según la separación entre rieles extremos) |
+| Margen propio de PANDA | 1 s | período de decisión y reacción |
+| **Total** | **32 s** | |
 
-A velocidad alta PANDA alerta casi justo a los 25 s, y a velocidad baja es conservador, porque un tren lento sí puede acelerar. Un tren detenido a más de 290 m **no** mantiene el cruce en NO SEGURO: esa es la ganancia de eficiencia frente al sistema estático.
+En un paso **solo peatonal** (`kHasBarrier = false`) el umbral es t_sem + 1 s, con t_sem = d_p / 0,7 m/s + 3 s (Anexo XII, punto 4.2): 21,1 s con 12 m de cruce.
+
+### ETA de peor caso
+
+Es el menor tiempo en que el tren *podría* llegar si acelerara al máximo que permite su material rodante: 1,0 m/s² hasta 40 km/h, después potencia constante, tope 120 km/h (`kLineMaxSpeedMps`). La distancia es en línea recta: en una vía curva sale más corta que la real y la alerta sale antes, así que el error va del lado seguro.
+
+El circuito de vía actual se dimensiona para 120 km/h: 31 s × 33,3 m/s = **1033 m**. PANDA, en cambio, cierra según la velocidad real:
+
+| Velocidad | Circuito actual: barrera baja antes del tren | PANDA cierra a | Ganancia por paso |
+|---|---|---|---|
+| detenido | (ocupado si está dentro del circuito) | 448 m | toda la detención si está a más de 448 m |
+| 20 km/h | 186 s | 574 m | 83 s |
+| 40 km/h | 93 s | 682 m | 32 s |
+| 60 km/h | 62 s | 794 m | 14 s |
+| 80 km/h | 47 s | 922 m | 5 s |
+| 100 km/h | 37 s | 1025 m | 0,3 s |
+
+A 120 km/h PANDA y el circuito cierran igual. Si el tramo tiene un límite menor que hace cumplir el ATS, poniendo ese límite en `kLineMaxSpeedMps` la ganancia crece (con 90 km/h: 11 s a 80 km/h).
+
+### Atribución del circuito de vía
+
+Cuando el circuito se ocupa, PANDA mira si en ese instante sigue un tren con dato fresco y coherente, que se acerca, a 1033 ± 100 m y del lado del circuito. Si lo encuentra, la ocupación es de ese tren y la barrera la maneja PANDA según su ETA (ahí está la ganancia). Si no, es un tren sin nodo (o con el nodo caído) y **cierra como siempre**. Además funciona como verificación cruzada de la posición que manda el tren.
+
+Cuando el circuito se libera con ese tren ya alejándose, la cola pasó la junta de salida: PANDA deja de sostener el cierre en ese mismo instante, igual que hoy.
+
+### Plausibilidad (acción del DFMEA contra la posición errónea)
+
+Cada dato nuevo se compara con el **último dato confiable** del tren. La distancia recorrida tiene que estar entre lo que el tren recorre frenando de emergencia (1,2 m/s²) y lo que recorre acelerando al máximo, con una tolerancia de 10 m más 3 veces la precisión informada. También se rechazan saltos de velocidad o aceleraciones imposibles. Mientras el dato no vuelva a esa envolvente, el cruce queda en NO SEGURO (`dato inconsistente`), y 2 s más después.
 
 ### Liberación de un tren en SIN DATOS
 
 - Vuelve a transmitir y los datos muestran que ya no hay peligro.
 - El circuito de vía se ocupa y se libera durante el silencio: el tren pasó.
-- A los 120 s de silencio, como último recurso. Se registra como `SilentRelease`. Para la barrera sigue mandando el circuito de vía (apertura en AND), así que esto no puede adelantar una apertura.
+- A los 120 s de silencio, como último recurso. Se registra como `SilentRelease`.
 
 Un tren que se alejaba y se deja de escuchar se olvida a los 10 s.
 
@@ -125,65 +154,68 @@ Para un ensayo, dejá el nodo quieto en el lugar unos minutos y guardá con `c`.
 
 ### Vigilancia
 
-- **Vigilante de salidas**: un timer en el core 0 verifica que la decisión (core 1) refresque las salidas cada 50 ms. A los 300 ms sin refresco las lleva a estado seguro por su cuenta.
+- **Vigilante de salidas**: un timer en el core 0 verifica que la decisión (core 1) refresque las salidas cada 50 ms. A los 300 ms sin refresco abre los dos contactos y la barrera vuelve a seguir solo al circuito de vía.
 - **Watchdog de tareas** del ESP-IDF: si la decisión no vuelve en 5 s, reinicia el micro. Durante el reinicio los pull-down externos dejan todo en estado seguro.
-- Falta sumar el **watchdog externo TPL5010** (acción del DFMEA).
+- **Watchdog externo TPL5010**: TODO, comentado en `config.h` (pin DONE en el GPIO 46).
 
-## 4 ter. Cableado del nodo cruce
+## 4 ter. Cableado del nodo cruce y maqueta de barrera
 
-Todos los pines están en el header derecho. Los GPIO 45 y 46 no se usan porque son pines de arranque del ESP32-S3.
+Con `kBarrierOnBoard = true` (por defecto) la **misma T-Beam maneja la maqueta**. El controlador de la maqueta es un módulo aparte del firmware (`crossing_io.cpp`) que solo ve los dos contactos de PANDA y el circuito de vía, igual que el controlador real:
 
-| GPIO | Función | Estado seguro |
-|---|---|---|
-| 21 | Relé **PANDA libre** | bajo = pedido de cierre |
-| 38 | Relé **PANDA operativo** | bajo = el controlador ignora a PANDA |
-| 39 | **Señal peatonal** NO SEGURO (LED rojo) | la maneja la lógica |
-| 48 | **Sonido** (PWM de 2,5 kHz a un buzzer o amplificador) | apagado |
-| 2 | Entrada **circuito de vía** por optoacoplador | alto (abierto) = OCUPADA |
+- PANDA operativo: la barrera baja si PANDA pide cierre.
+- PANDA no operativo: la barrera baja si el circuito está ocupado, que es el comportamiento actual.
 
-- Cada salida maneja su carga con un transistor (o un módulo de relé con optoacoplador) y lleva **un pull-down de 10 kΩ a GND en el GPIO**. Así, sin alimentación, en un reinicio o con el micro colgado, la salida queda en bajo, que es su estado seguro.
-- Los relés de PANDA se usan con lógica **"energizado = permiso"**: cualquier falla (se corta un cable, se quema la bobina, se cae el nodo) produce el estado seguro.
-- Circuito de vía: el optoacoplador conduce (pin a GND) con la vía **libre**. Con la entrada al aire se lee OCUPADA. Por eso viene desactivada en `config.h` (`kTrackCircuitEnabled = false`) y se simula con `v`. Activala recién con el opto cableado.
+Secuencia del Anexo XII: **fonoluminosa** 7 s (luces alternadas cada 0,5 s y campana), **bajada** (6 s en la maqueta, dentro de los 5 a 10 s del pliego), **abajo** hasta que se levanta el pedido, **subida** (3 s) con las señales apagadas. Si el pedido vuelve mientras sube, baja de inmediato.
 
-**Controlador de barrera de referencia.** En el producto, la combinación vive en el controlador de la barrera, no en PANDA. El nodo la calcula igual, la muestra en pantalla (`bar BAJA/alta`) y la registra, para demostrar el invariante:
+| GPIO | Con maqueta en la placa | Con controlador externo | Estado seguro |
+|---|---|---|---|
+| 21 | Servo del brazo (señal, el servo se alimenta aparte con 5 V) | Relé **PANDA libre** | bajo |
+| 38 | Luz roja A de la barrera | Relé **PANDA operativo** | bajo |
+| 3 | Luz roja B de la barrera (alterna con la A) | sin uso | bajo |
+| 39 | **Señal peatonal** NO SEGURO (LED rojo) | igual | la maneja la lógica |
+| 45 | **OTRO TREN** (LED con resistencia a GND, nada de pull-up: es pin de arranque) | igual | bajo |
+| 48 | **Sonido**: buzzer pasivo (PWM 2,5 kHz) o activo (`kBuzzerIsActive`) con transistor | igual | apagado |
+| 2 | Entrada **circuito de vía**: interruptor a GND (cerrado = LIBRE), después optoacoplador | igual | abierto = OCUPADA |
 
-- PANDA operativo: la barrera baja si PANDA pide cierre **o** la vía está ocupada.
-- PANDA no operativo: la barrera baja si la vía está ocupada, que es el comportamiento actual.
+- Cada salida lleva **un pull-down de 10 kΩ a GND**. Un LED se puede manejar directo con 330 Ω. El buzzer y la sirena, con un transistor NPN (BC547 o 2N2222) y 1 kΩ en la base.
+- La entrada del circuito viene desactivada (`kTrackCircuitEnabled = false`) y se simula con `v`. Activala recién con el interruptor o el opto cableado: con la entrada al aire se lee OCUPADA.
+- Limitación de la maqueta: sin energía el servo no baja solo. La barrera real cae por gravedad (Anexo XII, punto 5.2).
 
 ## 4 quater. Probar el cruce con una sola placa: simulador de trenes
 
-`tools/sim_trenes.py` genera trenes sobre una vía recta, arma beacons **reales** (cifrados y autenticados) y se los manda al nodo cruce por el USB. El nodo los procesa por el mismo camino que los de radio: CRC, CMAC, contador, frescura y decisión. Si el nodo no tiene fix, el simulador también le da el tiempo GPS desde el reloj de la PC.
+`tools/sim_trenes.py` genera trenes sobre una vía recta, arma beacons **reales** (cifrados y autenticados) y se los manda al nodo cruce por el USB. El nodo los procesa por el mismo camino que los de radio: CRC, CMAC, contador, frescura, plausibilidad y decisión. Si el nodo no tiene fix, el simulador también le da el tiempo GPS desde el reloj de la PC. Además **hace de circuito de vía**: le pasa su geometría (comando `Q`) y manda `v` cada vez que un tren entra o sale del circuito (1033 m del lado de aproximación hasta 5 m pasado el cruce, tenga nodo o no).
 
 1. Cargá `cruce` en la placa. No hace falta antena ni fix.
 2. **Cerrá el monitor serie de PlatformIO**: el puerto no se puede compartir.
 3. Corré, con el Python de PlatformIO, que ya trae pyserial:
 
 ```bash
-~/.platformio/penv/Scripts/python.exe tools/sim_trenes.py --puerto COM5 --escenario rapido
+~/.platformio/penv/Scripts/python.exe tools/sim_trenes.py --puerto COM5 --escenario lento
 ```
 
 El simulador muestra todo lo que imprime el nodo. Los cambios de estado salen en amarillo.
 
 > Si la placa tiene fix propio usa su tiempo GPS e ignora el de la PC. En ese caso el reloj de la PC tiene que estar sincronizado (en Windows: Configuración > Hora e idioma > Sincronizar ahora). Con más de 2 s de diferencia, los beacons simulados se rechazan como `VIEJO` o `FUTURO`, y eso es justamente la protección funcionando.
 
-Para ver qué *debería* pasar sin la placa, está el modelo de referencia en Python (`tools/modelo_cruce.py`, con las mismas reglas que `crossing.cpp`):
+Para ver qué *debería* pasar sin la placa, está el modelo de referencia en Python (`tools/modelo_cruce.py`, con las mismas reglas que `crossing.cpp`). Al final muestra cuánto tiempo pidió PANDA el cierre contra el tiempo que el circuito actual tendría la barrera baja:
 
 ```bash
-python tools/sim_trenes.py --seco --escenario rapido
+python tools/sim_trenes.py --seco --escenario lento
 ```
 
-| Escenario | Qué prueba | Resultado esperado |
+| Escenario | Qué prueba | Resultado esperado (modelo) |
 |---|---|---|
-| `rapido` | Tren a 100 km/h desde 1500 m | NO SEGURO a 792 m, en zona a 280 m, PASO, APAGADO 13 s después |
-| `lento` | Tren a 40 km/h desde 600 m | NO SEGURO a 489 m |
-| `detenido` | Frena y para a 500 m, espera 20 s, arranca | **No** alerta mientras está parado. Alerta a 401 m al arrancar |
-| `perdida` | Sin enlace entre 900 y 500 m | SIN DATOS a los 3,3 s de silencio, vuelve con datos |
-| `silencio` | El nodo del tren muere a 700 m | SIN DATOS hasta que el circuito de vía (simulado) lo libera |
-| `dos` | Dos trenes en sentidos opuestos | Dos ciclos completos, cada uno con su PASO |
+| `rapido` | Tren a 100 km/h desde 1500 m | Circuito explicado a 1039 m, NO SEGURO a 1022 m, apaga cuando el circuito se libera. 44,3 s contra 44,8 s |
+| `lento` | Tren a 40 km/h desde 1500 m | Circuito explicado a 1034 m, NO SEGURO recién a 681 m. 80,2 s contra 111,9 s (**+31,7 s**) |
+| `detenido` | Frena y para a unos 500 m (dentro del circuito), espera 20 s, arranca | NO SEGURO a 793 m mientras frena, APAGADO parado a 500 m, NO SEGURO al arrancar. **+37,9 s** |
+| `perdida` | Sin enlace entre 900 y 500 m | SIN DATOS 1 s después del corte (E-9), vuelve con datos |
+| `silencio` | El nodo del tren muere a 700 m | SIN DATOS hasta que el circuito se libera con la cola. +14,5 s |
+| `dos` | Dos trenes en sentidos opuestos | Dos ciclos, OTRO TREN cuando se superponen. -2,3 s (la otra vía no tiene su circuito cableado a la placa: se libera por radio, unos 4 s más tarde) |
 | `repeticion` | Un atacante reinyecta un paquete grabado | Se rechaza como `REPETIDO`, sin efecto en el estado |
 | `cmac` | Paquetes falsos sin la clave | Se rechazan como `CMAC`, sin efecto |
 | `sin_posicion` | Tren que se escucha sin fix | NO SEGURO (sin posición) hasta que da posición lejos |
-| `via` | Vía ocupada sin tren equipado | NO SEGURO por vía y un evento "vía ocupada con PANDA libre" |
+| `via` | Tren **sin nodo** a 80 km/h | Circuito sin explicar: NO SEGURO como siempre, mismo tiempo que hoy |
+| `salto` | El GNSS suma 300 m de error entre 800 y 700 m | `dato inconsistente` sin ningún hueco APAGADO, después sigue normal |
 
 > La inyección por USB y el tiempo desde la PC son **solo para banco**. En un nodo instalado hay que poner `kAllowInjection` y `kAllowPcTime` en `false` (`config.h`, sección `sim`).
 
@@ -202,6 +234,8 @@ python tools/sim_trenes.py --seco --escenario rapido
 | `c` / `C` | (solo cruce) Guardar / borrar la posición del cruce |
 | `v` | (solo cruce) Simular el circuito de vía: alterna LIBRE y OCUPADA |
 | `x` | (solo cruce) Silenciar o activar el sonido |
+
+Comandos del simulador (líneas, solo banco): `T <itow_ms>` tiempo GPS, `R <latE7> <lonE7>` posición del cruce, `Q <metros> <rumbo>` geometría del circuito de vía, `B <hex> <rssi> <snr>` beacon.
 
 El perfil y la potencia quedan guardados en la flash y sobreviven a un reinicio.
 
@@ -230,18 +264,19 @@ ID 3FA2 S3 d0 T:ok      id del nodo, sesión de registro, descartes, Traccar
 **Cruce**
 
 ```
-CRUCE SD+ WF+ USB
+CRUCE SD+ WFx USB
   NO SEGURO             estado en grande (invertido si es NO SEGURO)
-tren aproxima A001      motivo y tren
-792m 100km/h e25s       distancia al cruce, velocidad, ETA mínimo
-bar BAJA via lib* P+    barrera de referencia, circuito de vía (* = simulado), PANDA operativo
+2T tren aproxima A001   motivo y tren ("2T" = OTRO TREN)
+681m 40km/h e32s        distancia al cruce, velocidad, ETA de peor caso
+ABAJO via OCUe* P+      maqueta (ARRIBA, FONO, BAJANDO, ABAJO, SUBIENDO), circuito de vía
+                        (e = explicado por un tren, ! = sin nodo, * = simulado), PANDA operativo
 ```
 
 ## 7. Archivos en la microSD
 
 Cada encendido crea `PANDA_NNNN`. Todos los archivos comparten `t_us` (µs desde el arranque de esa placa).
 
-- `gnss.csv`, `imu.csv`, `events.csv`: iguales que en la fase 1 (el cruce no graba IMU).
+- `gnss.csv`, `imu.csv`, `events.csv`: iguales que en la fase 1 (el cruce no graba IMU). `gnss.csv` suma `acel_mps2`: aceleración longitudinal del GNSS (recta sobre 1 s de velocidades).
 - `tx.csv` (tren), un renglón por beacon:
 
 | Columna | Descripción |
@@ -269,6 +304,7 @@ Cada encendido crea `PANDA_NNNN`. Todos los archivos comparten `t_us` (µs desde
 | `dist_m` | Distancia entre nodos (vacío si falta algún fix) |
 | `tiempo`, `perfil` | Calidad de tiempo del cruce (3 = PC) y perfil de radio |
 | `origen` | `RADIO` o `USB` (simulador) |
+| `acel_mps2` | Aceleración que mandó el tren (vacío si no la tiene) |
 
 - `decision.csv` (cruce), un renglón por beacon válido de cada tren y en cada cambio de estado:
 
@@ -279,13 +315,15 @@ Cada encendido crea `PANDA_NNNN`. Todos los archivos comparten `t_us` (µs desde
 | `dist_m`, `vel_mps`, `acerc_mps` | Distancia al cruce proyectada al instante actual, velocidad y velocidad de acercamiento |
 | `eta_cv_s`, `eta_min_s` | ETA a velocidad constante y ETA mínimo |
 | `edad_ms` | Antigüedad del dato usado |
-| `panda_libre` ... `barrera_baja` | Salidas y entradas en ese instante |
+| `panda_libre`, `panda_ok`, `senal`, `via_ocupada` | Contactos, señal peatonal y circuito de vía |
+| `pedido_cierre` | Lo que se le pide al controlador de barrera |
+| `via_explicada`, `otro_tren` | La ocupación del circuito la explica un tren seguido / hay más de un tren en peligro |
 
 Para validar E-8a: el PASO real queda en `events.csv` (automático, por mínimo de distancia, y con el botón), y se compara con `t_us + eta_cv_s` de los renglones anteriores.
 
 ## 8. Beacon y seguridad
 
-35 bytes: cabecera en claro (versión, id, contador), 20 bytes cifrados con **AES-128-CTR** y etiqueta **AES-CMAC** de 8 bytes. El formato exacto está en `include/beacon.h`.
+35 bytes, versión 2: cabecera en claro (versión, id, contador), 20 bytes cifrados con **AES-128-CTR** y etiqueta **AES-CMAC** de 8 bytes. El formato exacto está en `include/beacon.h`. Dentro va la posición, la velocidad, el rumbo, la precisión (1 byte en dm) y la **aceleración** (1 byte en pasos de 0,02 m/s²). Se le sacó un byte a la precisión para no agrandar el beacon: con 36 bytes el aire pasaría de 18,0 a 19,3 ms y se perdería una de las 5 ranuras.
 
 El cruce valida en este orden y descarta al primer fallo: CRC, formato, **CMAC**, **contador** (anti-repetición) y **frescura** (antigüedad entre -0,5 y 2 s, E-22). Nada se descifra sin autenticar.
 

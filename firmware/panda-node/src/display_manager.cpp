@@ -11,6 +11,7 @@
 #include "button.h"
 #include "config.h"
 #include "crossing.h"
+#include "crossing_io.h"
 #include "gnss_manager.h"
 #include "pmu_manager.h"
 #include "radio_link.h"
@@ -244,9 +245,10 @@ static void drawRole() {
   }
   s_u8g2.setFont(u8g2_font_6x10_tf);
 
-  // Motivo.
+  // Motivo. Con más de un tren en peligro se antepone "2T" (OTRO TREN).
   if (haveCs && cs.reasonTrain != 0) {
-    snprintf(line, sizeof(line), "%s %04X", crossing::reasonName(cs.reason), cs.reasonTrain);
+    snprintf(line, sizeof(line), "%s%s %04X", cs.otherTrain ? "2T " : "", crossing::reasonName(cs.reason),
+             cs.reasonTrain);
   } else {
     snprintf(line, sizeof(line), "%s", haveCs ? crossing::reasonName(cs.reason) : "arrancando");
   }
@@ -267,10 +269,15 @@ static void drawRole() {
   }
   s_u8g2.drawStr(0, 52, line);
 
-  // Salidas: barrera de referencia, circuito de vía y PANDA operativo.
+  // Barrera, circuito de vía (e = explicado por un tren, ! = sin nodo, * =
+  // simulado) y PANDA operativo.
   if (haveCs) {
-    snprintf(line, sizeof(line), "bar %s via %s%s P%s", cs.barrierDown ? "BAJA" : "alta",
-             cs.trackOccupied ? "OCU" : "lib", cs.trackEnabled ? "" : "*", cs.pandaOk ? "+" : "-");
+    const char* bar = cfg::crossing::kBarrierOnBoard
+                          ? crossio::barrierPhaseName(static_cast<crossio::BarrierPhase>(cs.barrierPhase))
+                          : (cs.barrierDown ? "BAJA" : "alta");
+    snprintf(line, sizeof(line), "%s via %s%s%s P%s", bar, cs.trackOccupied ? "OCU" : "lib",
+             cs.trackOccupied ? (cs.trackExplained ? "e" : "!") : "", cs.trackEnabled ? "" : "*",
+             cs.pandaOk ? "+" : "-");
   } else {
     snprintf(line, sizeof(line), "--");
   }
@@ -319,7 +326,13 @@ static void printStatusLine() {
                     static_cast<double>(cs.closingMps), static_cast<double>(cs.etaCvS),
                     static_cast<double>(cs.etaMinS));
     }
-    Serial.printf(" bar %s via %s | ", cs.barrierDown ? "BAJA" : "alta", cs.trackOccupied ? "OCUPADA" : "libre");
+    Serial.printf(" bar %s via %s%s%s | ",
+                  cfg::crossing::kBarrierOnBoard
+                      ? crossio::barrierPhaseName(static_cast<crossio::BarrierPhase>(cs.barrierPhase))
+                      : (cs.barrierDown ? "BAJA" : "alta"),
+                  cs.trackOccupied ? "OCUPADA" : "libre",
+                  cs.trackOccupied ? (cs.trackExplained ? " explicada" : " SIN NODO") : "",
+                  cs.otherTrain ? " OTRO TREN" : "");
   }
   radiolink::RxStatus rx{};
   if (radiolink::latestRx(rx)) {

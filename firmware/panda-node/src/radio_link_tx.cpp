@@ -143,6 +143,9 @@ static void txTask(void*) {
       b.headingCdeg = static_cast<uint16_t>(head);
       b.hAccCm = static_cast<uint16_t>(std::min<uint32_t>(fix.hAccMm / 10, 65535));
       b.numSv = fix.numSv;
+      b.accelCms2 = fix.accelCms2;
+    } else {
+      b.accelCms2 = kAccelUnknown;
     }
 
     uint8_t packet[cfg::radio::kBeaconLength];

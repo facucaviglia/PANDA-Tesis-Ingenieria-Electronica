@@ -54,17 +54,28 @@ constexpr int kRtcInt = 14;
 
 // --- Entradas y salidas del nodo cruce (header derecho de la placa) ---------
 // GPIO libres del header según el pinout oficial de LilyGo: 2, 3, 21, 38, 39,
-// 45, 46 y 48. Se evitan 45 y 46 porque son pines de arranque del ESP32-S3:
-// un relé o un pull-up externo en ellos puede impedir que la placa arranque.
+// 45, 46 y 48. 45 y 46 son pines de arranque del ESP32-S3: un relé o un
+// pull-up externo en ellos puede impedir que la placa arranque. Solo se usa el
+// 45 para un LED con su resistencia a GND, que lo mantiene en bajo como pide
+// el arranque. El 46 queda reservado para el TPL5010 (TODO).
 //
 // Todas las salidas se cablean con un pull-down externo (10 kΩ a GND) y
 // manejan el relé o el LED a través de un transistor u optoacoplador. Así,
 // durante un reinicio, sin alimentación o con el micro colgado, la salida
 // queda en bajo, que es el estado seguro de cada una.
+//
+// Con cfg::crossing::kBarrierOnBoard = false (controlador de barrera externo):
 constexpr int kOutPandaLibre = 21;  // Relé "PANDA ve vía libre". Desenergizado = pedido de cierre
 constexpr int kOutPandaOk = 38;     // Relé "PANDA operativo". Desenergizado = ignorar PANDA
+// Con cfg::crossing::kBarrierOnBoard = true (maqueta manejada por esta placa),
+// los mismos pines pasan a la maqueta y los contactos quedan internos:
+constexpr int kOutServo = 21;        // Señal del servo del brazo (alimentar el servo aparte, 5 V)
+constexpr int kOutBarrierLightA = 38;  // Luz roja izquierda de la barrera
+constexpr int kOutBarrierLightB = 3;   // Luz roja derecha (alterna con la A cada 0,5 s)
+// Siempre:
 constexpr int kOutPedestrian = 39;  // Señal peatonal "CRUCE NO SEGURO" (LED rojo)
 constexpr int kOutBuzzer = 48;      // Aviso sonoro (PWM hacia un buzzer o amplificador)
+constexpr int kOutOtherTrain = 45;  // Indicación "OTRO TREN" del Anexo XII (LED a GND)
 
 // Circuito de vía, por optoacoplador. Opto conduciendo = pin en bajo = vía
 // LIBRE. Opto abierto o cable cortado = pin en alto por el pull-up = vía

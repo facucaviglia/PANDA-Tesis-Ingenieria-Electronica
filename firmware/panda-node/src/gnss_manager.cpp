@@ -4,6 +4,10 @@
 #include <SparkFun_u-blox_GNSS_v3.h>
 #include <esp_timer.h>
 
+#include <algorithm>
+#include <climits>
+#include <cmath>
+
 #include "board_pins.h"
 #include "config.h"
 #include "system_state.h"
@@ -114,6 +118,60 @@ const char* timeQualityName(TimeQuality q) {
 // ---------------------------------------------------------------------------
 static int64_t s_lastFixUs = 0;
 
+// ---------------------------------------------------------------------------
+// Aceleración longitudinal a partir de la velocidad del GNSS
+//
+// Recta de cuadrados mínimos sobre las últimas kAccelWindow velocidades (1 s a
+// 10 Hz). Con la velocidad Doppler del MAX-M10S (unos 0,05 m/s de error) da
+// unos 0,05 m/s² de error y no deriva. Es la aceleración ACTUAL: sirve para
+// registrar, validar el perfil de tracción y la plausibilidad, no para
+// predecir lo que va a hacer el conductor.
+// ---------------------------------------------------------------------------
+static constexpr int kAccelWindow = 10;
+static constexpr int kAccelMinSamples = 5;
+static constexpr uint32_t kAccelMaxGapMs = 250;
+static uint32_t s_accItow[kAccelWindow];
+static int32_t s_accSpeed[kAccelWindow];
+static int s_accCount = 0;
+static int s_accHead = 0;
+
+static int16_t updateAccel(const GnssFix& fix) {
+  if (!fix.fixOk) {
+    s_accCount = 0;
+    return INT16_MIN;
+  }
+  if (s_accCount > 0) {
+    const int last = (s_accHead + kAccelWindow - 1) % kAccelWindow;
+    const uint32_t gap = fix.itowMs - s_accItow[last];
+    if (gap == 0 || gap > kAccelMaxGapMs) s_accCount = 0;  // Hueco o cambio de semana
+  }
+  s_accItow[s_accHead] = fix.itowMs;
+  s_accSpeed[s_accHead] = fix.gSpeedMms;
+  s_accHead = (s_accHead + 1) % kAccelWindow;
+  if (s_accCount < kAccelWindow) ++s_accCount;
+  if (s_accCount < kAccelMinSamples) return INT16_MIN;
+
+  const int first = (s_accHead + kAccelWindow - s_accCount) % kAccelWindow;
+  double st = 0.0, sv = 0.0;
+  for (int i = 0; i < s_accCount; ++i) {
+    const int k = (first + i) % kAccelWindow;
+    st += (s_accItow[k] - s_accItow[first]) / 1000.0;
+    sv += s_accSpeed[k] / 1000.0;
+  }
+  const double mt = st / s_accCount;
+  const double mv = sv / s_accCount;
+  double num = 0.0, den = 0.0;
+  for (int i = 0; i < s_accCount; ++i) {
+    const int k = (first + i) % kAccelWindow;
+    const double dt = (s_accItow[k] - s_accItow[first]) / 1000.0 - mt;
+    num += dt * (s_accSpeed[k] / 1000.0 - mv);
+    den += dt * dt;
+  }
+  if (den <= 0.0) return INT16_MIN;
+  const double a = num / den * 100.0;  // cm/s²
+  return static_cast<int16_t>(std::max(-32767.0, std::min(32767.0, std::round(a))));
+}
+
 static void onNavPvt(UBX_NAV_PVT_data_t* pvt) {
   GnssFix fix{};
   fix.tRxUs = esp_timer_get_time();
@@ -135,6 +193,8 @@ static void onNavPvt(UBX_NAV_PVT_data_t* pvt) {
   // marcada como inválida.
   const bool typeOk = (fix.fixType >= 2 && fix.fixType <= 4);
   fix.fixOk = pvt->flags.bits.gnssFixOK && typeOk && !pvt->flags3.bits.invalidLlh;
+
+  fix.accelCms2 = updateAccel(fix);
 
   fix.timeValid = pvt->valid.bits.validDate && pvt->valid.bits.validTime && pvt->valid.bits.fullyResolved;
   fix.unixS = fix.timeValid ? utcToUnix(pvt->year, pvt->month, pvt->day, pvt->hour, pvt->min, pvt->sec) : 0;

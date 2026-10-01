@@ -31,7 +31,7 @@
 #error "Falta definir el rol: compilar con -e registrador, -e tren o -e cruce"
 #endif
 
-#define PANDA_FW_VERSION "0.3.0-fase3"
+#define PANDA_FW_VERSION "0.4.0-panda-principal"
 
 namespace cfg {
 
@@ -175,7 +175,9 @@ constexpr bool kAllowUnsyncedTx = true;
 // Beacon y seguridad (R-29, E-22)
 // -----------------------------------------------------------------------------
 namespace beacon {
-constexpr uint8_t kVersion = 1;
+// Versión 2: precisión en dm y aceleración (ver beacon.h). Un nodo con otra
+// versión se rechaza como formato inválido.
+constexpr uint8_t kVersion = 2;
 constexpr uint8_t kNodeTypeTren = 1;
 
 // Ventana de frescura en el receptor. Un beacon con más de 2 s de antigüedad
@@ -204,57 +206,133 @@ constexpr uint8_t kMacKey[16] = {0x50, 0x41, 0x4e, 0x44, 0x41, 0x2d, 0x4d, 0x41,
 }  // namespace beacon
 
 // -----------------------------------------------------------------------------
-// Lógica de decisión del nodo cruce (fase 3)
+// Lógica de decisión del nodo cruce
 //
-// El cruce muestra NO SEGURO si se cumple CUALQUIERA de estas condiciones
-// (cierre en OR), y solo se apaga cuando no se cumple NINGUNA (apertura en AND):
-//   1. Un tren podría llegar al cruce en menos de kAlertEtaS (ETA mínimo).
+// PANDA es el sistema PRINCIPAL del cruce (decisión del 1-oct-2026) y el
+// circuito de vía queda de respaldo. El cruce muestra NO SEGURO y pide el
+// cierre si se cumple CUALQUIERA de estas condiciones:
+//   1. Un tren podría llegar al cruce en menos de kAlertEtaS aunque acelerara
+//      al máximo que permite su material rodante (ETA de peor caso).
 //   2. Un tren está a menos de kOccupiedRadiusM: puede estar sobre el cruce.
 //   3. Un tren en aproximación o en zona dejó de mandar datos válidos (E-9).
-//   4. Un tren se escucha pero sin posición o sin tiempo verificable.
-//   5. El circuito de vía está ocupado.
-//   6. El propio nodo está en falla (sin radio, sin tiempo GPS, sin referencia).
+//   4. Un tren se escucha sin posición, sin tiempo verificable o con datos
+//      inconsistentes (plausibilidad).
+//   5. El circuito de vía está ocupado y PANDA no sigue al tren que lo ocupó
+//      (un tren sin nodo, o uno con el nodo caído): cierra como siempre.
+//   6. El propio nodo está en falla: se declara no operativo y la barrera
+//      vuelve a seguir solo al circuito de vía.
+// Lo nuevo frente al sistema actual: si el circuito se ocupa por un tren que
+// PANDA sigue y ese tren todavía no puede llegar en kAlertEtaS, la barrera
+// queda alta. Ahí está la ganancia para los trenes que no vienen a la máxima.
+//
+// Fuente de los tiempos: Anexo XII de ADIF, "Barreras automáticas en pasos a
+// nivel y anuncios en pasos peatonales" (pliego de la Línea Roca), puntos 19
+// y 20, que a su vez toman la Tabla I del SETOP 7/81.
 // -----------------------------------------------------------------------------
 namespace crossing {
 // Período de la tarea de decisión. 20 Hz, el doble que los beacons.
 constexpr uint32_t kPeriodMs = 50;
 
-// E-8b: umbral de alerta. 12 s de la Tabla I del SETOP (barrera baja antes de
-// que llegue el tren) + 5 s de preaviso (8.6.6) + 8 s de margen para latencias
-// y para la maniobra de la barrera.
-constexpr float kAlertEtaS = 25.0f;
+// --- Ciclo de la barrera según ADIF (Anexo XII, punto 20) -------------------
+// Fonoluminosa: luces y campana antes de que empiece a bajar el brazo.
+constexpr float kFonoluminosaS = 7.0f;
+// Bajada del brazo: entre 5 y 10 s según el pliego, se calcula con 10 s.
+constexpr float kArmDownS = 10.0f;
+// Despejamiento: brazo ya abajo hasta que llega el tren. 12 s si la
+// separación entre rieles extremos es de hasta 5 m (vía simple), 14 s entre 5
+// y 10 m (vía doble, el caso típico del AMBA) y 16 s entre 10 y 15 m.
+constexpr float kClearanceS = 14.0f;
+constexpr float kBarrierCycleS = kFonoluminosaS + kArmDownS + kClearanceS;  // 31 s
 
-// ETA mínimo: se supone que el tren puede acelerar a esta tasa desde la
-// velocidad medida. Un tren detenido cerca se considera que puede arrancar, y
-// uno que acelera no toma desprevenido al cruce. 1,0 m/s² cubre a las
-// formaciones eléctricas del AMBA. Con el perfil de tracción de abajo, un tren
-// detenido a menos de 290 m mantiene el cruce en NO SEGURO, y la alerta de un
-// tren a 100 km/h arranca a 792 m (28,5 s antes de que llegue).
-constexpr float kMaxAccelMps2 = 1.0f;
+// --- Paso peatonal sin barrera (Anexo XII, punto 4.2) ------------------------
+// Si el cruce es solo peatonal, la señal se enciende t_sem = t_p + 3 s antes
+// del tren, con t_p = d_p / 0,7 m/s (velocidad del peatón de la Ley 22.431).
+constexpr bool kHasBarrier = true;
+constexpr float kPedestrianPathM = 12.0f;   // Distancia entre líneas de detención
+constexpr float kPedestrianSpeedMps = 0.7f;
+constexpr float kPedestrianWarnS = kPedestrianPathM / kPedestrianSpeedMps + 3.0f;  // 20,1 s
 
-// Perfil de tracción máximo que se le supone al tren para el ETA mínimo:
+// Margen propio de PANDA: período de decisión, salida y reacción del
+// controlador. La antigüedad del dato ya se compensa proyectando la posición.
+constexpr float kLatencyMarginS = 1.0f;
+
+// E-8b: umbral de decisión. Con barrera, 31 + 1 = 32 s.
+constexpr float kAlertEtaS = (kHasBarrier ? kBarrierCycleS : kPedestrianWarnS) + kLatencyMarginS;
+
+// --- Perfil de tracción de peor caso de la flota (línea piloto: Roca) -------
+// El ETA de peor caso supone que el tren acelera al máximo desde la velocidad
+// medida:
 //   hasta kAccelKneeMps     aceleración constante kMaxAccelMps2
 //   luego, hasta la máxima  potencia constante: a = a0 * vk / v
-//   kLineMaxSpeedMps        velocidad máxima de la línea, no la supera
-// Sin la parte de potencia constante, a 100 km/h se supondría 1 m/s² y la
-// alerta se adelantaría unos 11 s de más, que es justo la ineficiencia que
-// PANDA quiere reducir. 11,1 m/s = 40 km/h. 33,3 m/s = 120 km/h.
+//   kLineMaxSpeedMps        velocidad máxima, no la supera
+// Datos del CSR del Roca: aceleración publicada "superior a 0,8 m/s²", se toma
+// 1,0 m/s² como cota hasta medirla en el viaje. La potencia publicada de la
+// familia CSR es inconsistente (190 kW por motor da 3040 kW en 6 coches, la
+// ficha dice 2160 kW). Con 3040 kW y 270 t vacío, P / (m a0) = 11,3 m/s: se
+// toma el codo en 11,1 m/s (40 km/h), del lado seguro. Velocidad máxima de
+// diseño 120 km/h. Con este perfil un tren detenido es peligro hasta 448 m y
+// uno a 120 km/h se avisa 32 s antes (1066 m), la norma más 1 s de margen.
+// kLineMaxSpeedMps es la máxima del tramo del cruce. Si el tramo tiene un
+// límite menor que 120 km/h y el ATS lo hace cumplir, conviene poner ese
+// límite: la ganancia crece (a 80 km/h pasa de 5 s a 11 s con tope de 90).
+constexpr float kMaxAccelMps2 = 1.0f;
 constexpr float kAccelKneeMps = 11.1f;
 constexpr float kLineMaxSpeedMps = 33.3f;
 
 // Requisito de instalación: el nodo tren va en la CABINA DELANTERA, en el
 // sentido de marcha. Así la posición del beacon es la del frente del tren (a
-// pocos metros, cubiertos por el margen del umbral) y el ETA no se atrasa. Si
-// el nodo fuera en la cola, el frente llegaría hasta kMaxTrainLengthM antes
-// (7,5 s a 120 km/h) y el ETA quedaría del lado inseguro.
+// pocos metros, cubiertos por el margen) y el ETA no se atrasa. En el producto
+// van dos nodos por formación, uno por cabina (trabajo futuro).
 //
 // Radio de ocupación: con el nodo en el frente, después del paso el resto de
-// la formación sigue sobre el cruce. Con un tren de hasta kMaxTrainLengthM,
-// cualquier tren más cerca que eso más un margen se considera sobre el cruce.
-// Para cargas largas hay que subirlo (la protección de fondo es el circuito de vía).
-constexpr float kMaxTrainLengthM = 250.0f;
+// la formación sigue sobre el cruce. Roca: hasta 8 coches de 25,8 m = 206 m.
+// Los trenes de carga, más largos, no tienen nodo: los cubre el circuito.
+constexpr float kMaxTrainLengthM = 210.0f;
 constexpr float kOccupiedMarginM = 30.0f;
 constexpr float kOccupiedRadiusM = kMaxTrainLengthM + kOccupiedMarginM;
+
+// --- Circuito de vía y atribución -------------------------------------------
+// El sector de operación de ADIF mide el ciclo completo a la velocidad del
+// tren más rápido, que el pliego fija en 120 km/h: 31 s × 33,3 m/s = 1033 m.
+// Cuando el circuito se ocupa, PANDA lo da por "explicado" solo si en ese
+// instante sigue un tren con dato fresco y coherente que se acerca y está a
+// kTrackCircuitDistM ± kAttributionTolM, del lado del circuito. Si no, es un
+// tren que PANDA no ve y se cierra como siempre. Sirve además de verificación
+// cruzada de la posición que manda el tren.
+constexpr float kDesignSpeedMps = 120.0f / 3.6f;
+constexpr float kTrackCircuitDistM = kBarrierCycleS * kDesignSpeedMps;
+constexpr float kAttributionTolM = 100.0f;
+// Lado del circuito: rumbo desde el cruce hacia la junta de aproximación, en
+// grados. Negativo = no se verifica el lado (banco). Se puede fijar en RAM con
+// el comando "Q distancia rumbo" del simulador.
+constexpr float kTrackCircuitBearingDeg = -1.0f;
+constexpr float kSideTolDeg = 45.0f;
+
+// Circuito de vía físico. En false, el nodo trabaja sin esa entrada y se
+// simula con el comando "v" de la consola. Pasar a true recién con la entrada
+// cableada: con la entrada al aire se lee vía OCUPADA, que es lo seguro.
+constexpr bool kTrackCircuitEnabled = false;
+constexpr uint32_t kTrackDebounceMs = 50;
+
+// --- Plausibilidad del dato del tren (acción del DFMEA, modo RPN 120) -------
+// Cada beacon válido se compara con el último dato CONFIABLE del mismo tren
+// (el ancla), no con el anterior: así un salto del GNSS que después se queda
+// corrido no vuelve a parecer coherente. La distancia recorrida desde el ancla
+// tiene que estar entre lo que el tren recorre frenando de emergencia y lo que
+// recorre acelerando al máximo (perfil de arriba), con una tolerancia que
+// crece con la precisión informada. También se rechaza un cambio de velocidad
+// o una aceleración informada imposibles. Mientras el dato no vuelve a entrar
+// en esa envolvente, el ancla no se mueve y el cruce queda en NO SEGURO, y
+// sigue así kPlausHoldMs después. Frenado de emergencia del CSR: 1,2 m/s².
+constexpr float kPlausPosTolM = 10.0f;
+constexpr float kPlausHAccFactor = 3.0f;
+constexpr float kPlausBrakeMps2 = 1.2f;
+constexpr float kPlausAccelMps2 = 2.2f;
+constexpr float kPlausSpeedTolMps = 0.5f;
+// Un ancla más vieja que esto (silencio largo) se reemplaza sin comparar. El
+// silencio lo cubre la regla de SIN DATOS.
+constexpr float kPlausAnchorMaxAgeS = 30.0f;
+constexpr uint32_t kPlausHoldMs = 2000;
 
 // Velocidad de acercamiento mínima para considerar que un tren se aproxima.
 // Por debajo es ruido del GNSS.
@@ -286,22 +364,17 @@ constexpr int32_t kFixedRefLatE7 = 0;
 constexpr int32_t kFixedRefLonE7 = 0;
 constexpr uint32_t kRefAvgWindow = 600;  // 60 s a 10 Hz
 
-// Circuito de vía. En false, el nodo trabaja sin esa entrada (queda como "no
-// conectado") y se puede simular con el comando "v" de la consola. Pasar a
-// true recién con el optoacoplador cableado: con la entrada al aire se lee
-// vía OCUPADA, que es lo seguro.
-constexpr bool kTrackCircuitEnabled = false;
-constexpr uint32_t kTrackDebounceMs = 50;
-
 // Vigilancia de la tarea de decisión: si no refresca las salidas en este
 // tiempo, un timer independiente en el otro núcleo las lleva a estado seguro.
 constexpr uint32_t kHeartbeatTimeoutMs = 300;
 
-// Aviso sonoro: un toque por segundo mientras el cruce está NO SEGURO por un
-// tren o por el circuito de vía (SETOP 8.6.7 usa el mismo ritmo en la campana).
+// Aviso sonoro: un toque por segundo mientras el cruce está NO SEGURO (SETOP
+// 8.6.7 y Anexo XII, 60 a 240 golpes por minuto). Con OTRO TREN el ritmo se
+// duplica (el Anexo XII pide de 1,5 a 2 veces).
 constexpr uint32_t kBeepHz = 2500;
 constexpr uint32_t kBeepOnMs = 200;
 constexpr uint32_t kBeepPeriodMs = 1000;
+constexpr uint32_t kBeepPeriodOtherTrainMs = 500;
 
 // Tipo de buzzer en GPIO 48. Pasivo (sin oscilador interno): se maneja con PWM
 // a kBeepHz. Activo (trae su oscilador, suena con tensión continua, el más
@@ -309,10 +382,23 @@ constexpr uint32_t kBeepPeriodMs = 1000;
 // sirena de 12 V se maneja igual que uno activo, a través de un transistor.
 constexpr bool kBuzzerIsActive = false;
 
+// --- Maqueta de barrera en la misma placa ------------------------------------
+// En el prototipo el controlador de la barrera corre en la misma T-Beam del
+// cruce, como un módulo aparte que solo ve los dos contactos de PANDA y el
+// circuito de vía, igual que el controlador real. En true, los GPIO 21, 38 y
+// 3 manejan el servo y las dos luces alternadas. En false, el 21 y el 38 son
+// los relés "PANDA libre" y "PANDA operativo" hacia un controlador externo.
+constexpr bool kBarrierOnBoard = true;
+// Tiempos de la maqueta. La bajada está dentro de los 5 a 10 s del pliego.
+constexpr float kModelArmDownS = 6.0f;
+constexpr float kModelArmUpS = 3.0f;
+constexpr uint32_t kServoUpUs = 1000;     // Brazo vertical (abierto)
+constexpr uint32_t kServoDownUs = 2000;   // Brazo horizontal (cerrado)
+constexpr uint32_t kBarrierLightHalfMs = 500;  // SETOP 8.6.5: alternan cada 0,5 s
+
 // TODO(tpl5010): watchdog externo TPL5010 (acción del DFMEA para el bloqueo del
 // micro). Queda para después de probar las dos placas. Plan:
-//   - Pin DONE del TPL5010 en un GPIO libre (45 o 46, ojo que son pines de
-//     arranque, o el 3 si la medición de corriente del LED va por I2C).
+//   - Pin DONE del TPL5010 en el GPIO 46 (pin de arranque: no ponerle pull-up).
 //   - Salida RESET del TPL5010 al pin EN del ESP32.
 //   - Pulso en DONE desde crossio::apply(), o sea solo si la tarea de decisión
 //     está viva y refrescando las salidas.

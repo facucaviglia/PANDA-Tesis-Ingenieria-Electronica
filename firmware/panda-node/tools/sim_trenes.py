@@ -10,6 +10,10 @@ CMAC, contador, frescura y lógica de decisión.
 También le da al nodo:
   - el tiempo GPS, calculado desde el reloj de la PC (si el nodo no tiene fix)
   - una posición de referencia del cruce solo en RAM (no pisa la guardada)
+  - la geometría del circuito de vía (comando Q) y su estado: el simulador
+    hace de circuito de vía y manda "v" cada vez que cambia. El circuito es
+    uno solo, del lado s < 0, de 1033 m (Anexo XII de ADIF) hasta 5 m pasado
+    el cruce, y lo ocupa cualquier tren que venga de ese lado, tenga nodo o no.
 
 Uso (con el Python de PlatformIO, que ya trae pyserial):
     ~/.platformio/penv/Scripts/python.exe tools/sim_trenes.py --puerto COM5 --escenario rapido
@@ -31,6 +35,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from verify_crypto import seal  # noqa: E402
+from modelo_cruce import TRACK_CIRCUIT_DIST_M  # noqa: E402
 
 try:
     import serial
@@ -43,6 +48,9 @@ LEAP_SECONDS = 18
 WEEK_MS = 604800 * 1000
 GNSS_LATENCY_MS = 40          # Latencia típica del NAV-PVT respecto de su época
 F_FIX, F_TIME, F_PPS = 1, 2, 4
+LARGO_FORMACION_M = 206.0     # Roca, 8 coches
+JUNTA_SALIDA_M = 5.0          # Anexo XII: junta de libranza a 3 a 6 m del cruce
+HACC_CM = 150
 
 
 def gps_tow_ms(unix_s=None):
@@ -57,8 +65,12 @@ def gps_tow_ms(unix_s=None):
 # Tren: posición sobre la vía (s en metros, 0 = cruce) y velocidad
 # ---------------------------------------------------------------------------
 class Tren:
-    def __init__(self, node_id, s0, v_kmh, sentido=+1):
+    def __init__(self, node_id, s0, v_kmh, sentido=+1, con_nodo=True):
         self.node_id = node_id
+        self.con_nodo = con_nodo         # False: tren que PANDA no ve (solo lo detecta el circuito)
+        self.largo = LARGO_FORMACION_M
+        self.a_actual = 0.0              # aceleración real del último paso, la que mide el GNSS
+        self.salto_m = 0.0               # error que se le suma a la posición informada (multitrayecto)
         self.s = float(s0)
         self.v = v_kmh / 3.6
         self.sentido = sentido           # +1 avanza hacia s creciente, -1 al revés
@@ -72,13 +84,30 @@ class Tren:
         self.ultimo_paquete = None
 
     def paso(self, dt):
+        v0 = self.v
         if self.v_obj is not None:
             dv = self.v_obj - self.v
             paso = math.copysign(min(abs(dv), abs(self.a) * dt), dv)
             self.v = max(0.0, self.v + paso)
             if abs(self.v_obj - self.v) < 1e-3:
                 self.v_obj = None
+        self.a_actual = (self.v - v0) / dt
         self.s += self.sentido * self.v * dt
+
+    def ocupa_circuito(self):
+        """El circuito del lado s < 0 va de -1033 m hasta la junta de salida."""
+        if self.sentido < 0:
+            return False                 # viene por la otra vía, que tiene su propio circuito
+        cola = self.s - self.largo
+        return self.s >= -TRACK_CIRCUIT_DIST_M and cola <= JUNTA_SALIDA_M
+
+    def ocupa_circuito_otra_via(self):
+        """Circuito de la otra vía (trenes desde s > 0). No está cableado a la
+        placa: solo sirve para comparar con el sistema actual."""
+        if self.sentido > 0:
+            return False
+        cola = self.s + self.largo
+        return self.s <= TRACK_CIRCUIT_DIST_M and cola >= -JUNTA_SALIDA_M
 
     def frenar_a(self, v_kmh, decel):
         self.v_obj, self.a = v_kmh / 3.6, decel
@@ -115,18 +144,19 @@ def esc_rapido(t, tr, acc):
 
 
 def esc_lento(t, tr, acc):
-    """Un tren a 40 km/h desde 600 m."""
+    """Un tren a 40 km/h desde 1500 m: es donde más gana PANDA."""
     if t == 0:
-        tr.append(Tren(0xA001, -600, 40))
-    return tr[0].s < 350
+        tr.append(Tren(0xA001, -1500, 40))
+    return tr[0].s < 400
 
 
 def esc_detenido(t, tr, acc):
-    """Viene a 60 km/h, frena y se detiene a 500 m, espera 20 s y arranca."""
+    """Viene a 60 km/h, frena a 0,7 m/s² y se detiene a unos 500 m (dentro del
+    circuito), espera 20 s y arranca."""
     if t == 0:
         tr.append(Tren(0xA001, -1500, 60))
     x = tr[0]
-    if x.s > -620 and x.v > 0 and not hasattr(x, "frenó"):
+    if x.s > -700 and x.v > 0 and not hasattr(x, "frenó"):
         x.frenó = True
         x.frenar_a(0, 0.7)
     if hasattr(x, "frenó") and x.v == 0 and not hasattr(x, "parado_desde"):
@@ -147,20 +177,14 @@ def esc_perdida(t, tr, acc):
 
 
 def esc_silencio(t, tr, acc):
-    """El nodo del tren muere a 700 m. Después pasa por el circuito de vía
-    (simulado con 'v') y el cruce lo libera por esa vía."""
+    """El nodo del tren muere a 700 m. El circuito de vía lo sigue viendo y,
+    cuando la cola pasa, el cruce lo libera por esa vía."""
     if t == 0:
         tr.append(Tren(0xA001, -1200, 60))
     x = tr[0]
     if x.s > -700:
         x.transmite = False
-    if x.s > -5 and not hasattr(x, "via_ocupada"):
-        x.via_ocupada = t
-        acc.append("v")          # circuito de vía: OCUPADA
-    if hasattr(x, "via_ocupada") and t - x.via_ocupada > 12 and not hasattr(x, "via_libre"):
-        x.via_libre = True
-        acc.append("v")          # circuito de vía: LIBRE
-    return not hasattr(x, "via_libre") or t - x.via_ocupada < 20
+    return x.s < 400
 
 
 def esc_dos(t, tr, acc):
@@ -206,10 +230,22 @@ def esc_sin_posicion(t, tr, acc):
 
 
 def esc_via(t, tr, acc):
-    """Sin trenes con nodo: el circuito de vía detecta uno que PANDA no ve."""
-    if abs(t - 5) < 1e-6 or abs(t - 20) < 1e-6:
-        acc.append("v")
-    return t < 30
+    """Un tren SIN nodo a 80 km/h: solo lo ve el circuito y cierra como siempre."""
+    if t == 0:
+        x = Tren(0xB001, -1500, 80, con_nodo=False)
+        x.transmite = False
+        tr.append(x)
+    return tr[0].s < 400
+
+
+def esc_salto(t, tr, acc):
+    """Tren a 60 km/h. Entre 800 y 700 m el GNSS le suma 300 m de error
+    (multitrayecto): la plausibilidad lo detecta y el cruce queda NO SEGURO."""
+    if t == 0:
+        tr.append(Tren(0xA001, -1500, 60))
+    x = tr[0]
+    x.salto_m = -300.0 if -800 < x.s < -700 else 0.0
+    return x.s < 400
 
 
 ESCENARIOS = {
@@ -223,6 +259,7 @@ ESCENARIOS = {
     "cmac": esc_cmac,
     "sin_posicion": esc_sin_posicion,
     "via": esc_via,
+    "salto": esc_salto,
 }
 
 
@@ -273,25 +310,28 @@ def correr_seco(args):
         acciones = []
         sigue = escenario(round(t, 1), trenes, acciones)
         for x in trenes:
-            if x.transmite:
-                lat_e7, lon_e7 = via.posicion(x.s)
+            if x.transmite and x.con_nodo:
+                s_inf = x.s + x.salto_m
+                lat_e7, lon_e7 = via.posicion(s_inf)
                 x.counter += 1
+                acel = int(round(x.a_actual * 100))
                 pkt = seal(x.node_id, x.counter, F_TIME | F_PPS | (F_FIX if x.con_fix else 0), 1000, lat_e7, lon_e7,
-                           int(round(x.v * 100)), via.rumbo_tren(x.sentido), 150, 14)
+                           int(round(x.v * 100)), via.rumbo_tren(x.sentido), HACC_CM, 14, acel)
                 assert open_beacon(pkt) is not None
                 x.ultimo_paquete = pkt
                 beacons += 1
-                modelo.beacon(t, x.node_id, x.s, x.v, x.sentido, x.con_fix)
+                modelo.beacon(t, x.node_id, s_inf, x.v, x.sentido, x.con_fix, acel / 100.0, HACC_CM / 100.0)
             min_d[x.node_id] = min(min_d.get(x.node_id, 1e9), abs(x.s))
             x.paso(dt)
+        ocupado = any(x.ocupa_circuito() for x in trenes)
+        if ocupado != via_sim:
+            via_sim = ocupado
+            otras.append((round(t, 1), "v"))
+            modelo.set_via(t, via_sim)
+        modelo.set_via_b(any(x.ocupa_circuito_otra_via() for x in trenes))
         for a in acciones:
             if isinstance(a, tuple):
                 crudos += 1
-            else:
-                otras.append((round(t, 1), a))
-                if a == "v":
-                    via_sim = not via_sim
-                    modelo.set_via(via_sim)
         # La decisión corre a 20 Hz: dos vueltas por cada paso de 100 ms.
         modelo.tick(t)
         modelo.tick(t + dt / 2)
@@ -300,26 +340,38 @@ def correr_seco(args):
         t += dt
     for _ in range(200):  # 10 s más, para ver cómo se apaga
         t += dt / 2
+        for x in trenes:
+            x.paso(dt / 2)
+        ocupado = any(x.ocupa_circuito() for x in trenes)
+        if ocupado != via_sim:
+            via_sim = ocupado
+            otras.append((round(t, 1), "v"))
+            modelo.set_via(t, via_sim)
+        modelo.set_via_b(any(x.ocupa_circuito_otra_via() for x in trenes))
         modelo.tick(t)
 
-    print(f"{args.escenario}: {beacons} beacons válidos, {crudos} paquetes crudos, comandos {otras}, "
+    print(f"{args.escenario}: {beacons} beacons válidos, {crudos} paquetes crudos, circuito {otras}, "
           f"distancia mínima por tren {{{', '.join(f'{k:04X}: {v:.0f} m' for k, v in min_d.items())}}}")
     print("  Estados esperados en el cruce (modelo de referencia):")
-    eventos = []
-    for tt, est, motivo, tren, d, eta in modelo.transiciones:
+    eventos = list(modelo.eventos)
+    for tt, est, motivo, tren, d, eta, otro in modelo.transiciones:
         if tren and not math.isnan(d):
             extra = f"  tren {tren:04X} a {d:.0f} m, ETA mín {eta:.1f} s"
         elif tren:
             extra = f"  tren {tren:04X}"
         else:
             extra = ""
-        eventos.append((tt, f"{est:9s}  {motivo}{extra}"))
+        eventos.append((tt, f"{est:9s}  {motivo}{extra}{'  OTRO TREN' if otro else ''}"))
     for tt, tren, dmin in modelo.pasos:
         eventos.append((tt, f"PASO del tren {tren:04X}, distancia mínima {dmin} m"))
     for tt, texto in sorted(eventos, key=lambda e: e[0]):
         print(f"    t={tt:6.1f} s  {texto}")
     if modelo.via_sin_panda:
         print(f"    vía ocupada con PANDA en vía libre: {modelo.via_sin_panda}")
+    if modelo.inconsistentes:
+        print(f"    datos inconsistentes rechazados: {modelo.inconsistentes}")
+    print(f"  Pedido de cierre: con PANDA {modelo.t_cierre_panda:.1f} s, sistema actual (circuito) "
+          f"{modelo.t_via_ocupada:.1f} s, diferencia {modelo.t_via_ocupada - modelo.t_cierre_panda:+.1f} s")
     return 0
 
 
@@ -370,10 +422,13 @@ def main():
     print(f"== Escenario {args.escenario}: {ESCENARIOS[args.escenario].__doc__.strip()}")
     print(f"== Cruce en {lat:.6f}, {lon:.6f}, vía a {args.rumbo:.0f} grados. Ctrl+C para cortar.\n")
     enviar(f"R {int(round(lat * 1e7))} {int(round(lon * 1e7))}")
+    # El circuito está del lado s < 0: rumbo desde el cruce = rumbo de la vía + 180.
+    enviar(f"Q {TRACK_CIRCUIT_DIST_M:.0f} {(args.rumbo + 180.0) % 360.0:.0f}")
     enviar(f"T {gps_tow_ms()}")
     time.sleep(0.5)
 
     trenes, t, dt = [], 0.0, 0.1
+    via_ocupada = False
     escenario = ESCENARIOS[args.escenario]
     proximo = time.monotonic()
     ultimo_t = -1.0
@@ -386,19 +441,23 @@ def main():
                 enviar(f"T {tow}")
 
             for x in trenes:
-                if x.transmite:
-                    lat_e7, lon_e7 = via.posicion(x.s)
+                if x.transmite and x.con_nodo:
+                    lat_e7, lon_e7 = via.posicion(x.s + x.salto_m)
                     # iTOW de la época GNSS más reciente, con la latencia del receptor.
                     itow = ((tow - GNSS_LATENCY_MS) // 100) * 100
                     flags = F_TIME | F_PPS | (F_FIX if x.con_fix else 0)
                     x.counter += 1
                     pkt = seal(x.node_id, x.counter, flags, itow, lat_e7, lon_e7, int(round(x.v * 100)),
-                               via.rumbo_tren(x.sentido), 150, 14)
+                               via.rumbo_tren(x.sentido), HACC_CM, 14, int(round(x.a_actual * 100)))
                     x.ultimo_paquete = pkt
                     rssi, snr = rssi_simulado(abs(x.s))
                     enviar(f"B {pkt.hex()} {rssi:.1f} {snr:.1f}")
                 x.paso(dt)
 
+            ocupado = any(x.ocupa_circuito() for x in trenes)
+            if ocupado != via_ocupada:
+                via_ocupada = ocupado
+                enviar("v")
             for a in acciones:
                 if isinstance(a, tuple) and a[0] == "raw":
                     enviar(f"B {a[1].hex()} -90.0 5.0")
@@ -415,6 +474,8 @@ def main():
             if not sigue:
                 print("\n== Fin del escenario. Se sigue escuchando 5 s.")
                 time.sleep(5)
+                if via_ocupada:
+                    enviar("v")      # deja el circuito simulado libre
                 break
             t += dt
             proximo += dt

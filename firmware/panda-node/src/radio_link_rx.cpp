@@ -68,6 +68,7 @@ static TrainTrack& trackFor(uint16_t nodeId) {
 static void processPacket(BeaconCodec& codec, const uint8_t* buf, int16_t radioSt, const PacketInfo& info,
                           int64_t tEnd, bool injected) {
   RxLog r{};
+  r.accelCms2 = INT16_MIN;
   r.tEndUs = tEnd;
   r.rssiDbm = info.rssiDbm;
   r.snrDb = info.snrDb;
@@ -102,6 +103,7 @@ static void processPacket(BeaconCodec& codec, const uint8_t* buf, int16_t radioS
       r.speedCms = b.speedCms;
       r.headingCdeg = b.headingCdeg;
       r.hAccCm = b.hAccCm;
+      r.accelCms2 = b.accelCms2;
       r.numSv = b.numSv;
       r.flags = b.flags;
 
