@@ -6,9 +6,10 @@ Estado al 24 de septiembre de 2026
 
 0. INSTRUCCIONES PARA LA IA QUE LEA ESTE ARCHIVO
 --------------------------------------------------------------------------------
-Este archivo complementa a "PANDA contexto sept.txt" (el contexto general de la
-tesis: problema, arquitectura, normativa, DFMEA, economía). Ese sigue siendo la
-fuente para todo lo que no sea firmware. Este es la fuente para el firmware.
+Este archivo complementa a PANDA_contexto_tesis.txt (misma carpeta, el
+contexto general de la tesis: problema, arquitectura, normativa, DFMEA,
+economía, matriz de cumplimiento). Ese es la fuente para todo lo que no sea
+firmware. Este es la fuente para el firmware.
 
 Cómo hablarle a Facu (reglas duras, iguales al documento general):
 - Español rioplatense informal, directo y conciso. Nunca decir "che".
@@ -31,7 +32,12 @@ Qué NO reabrir (decisiones tomadas con Facu):
 Qué NO asumir:
 - NADA fue probado en una placa todavía. Todo compila y la lógica se verificó
   con modelos en Python, pero el primer arranque real puede pedir ajustes.
-- Hoy tienen UNA sola T-Beam. La segunda está por llegar.
+- Las T-Beam llegan la semana del 5-oct-2026 (confirmar cuántas).
+- Recompilado el 1-oct-2026: los tres roles compilan sin errores.
+- Pendientes de diseño detectados el 1-oct (ver PANDA_contexto_tesis.txt
+  sección 10): el ETA usa la posición de la antena sin contemplar que el nodo
+  vaya en la cola de la formación, y la ranura sale del ID de la MAC (fijar
+  PANDA_NODE_ID a mano si hay dos trenes).
 
 
 1. QUÉ ES Y DÓNDE ESTÁ

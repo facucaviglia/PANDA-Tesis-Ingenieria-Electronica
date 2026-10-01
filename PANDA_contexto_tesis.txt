@@ -1,0 +1,914 @@
+================================================================================
+PANDA · PASO A NIVEL DINÁMICO Y ACTIVO
+DOCUMENTO DE CONTEXTO GENERAL DE LA TESIS
+Estado al 1 de octubre de 2026 (entre el Hito 2 y la entrega del Hito 3)
+================================================================================
+
+0. INSTRUCCIONES PARA LA IA QUE LEA ESTE ARCHIVO
+--------------------------------------------------------------------------------
+Este archivo reemplaza a "PANDA contexto sept.txt" (versión del 16-sep-2026) y a
+cualquier documento de contexto anterior. Vive en el repositorio, en la raíz:
+  D:\ITBA\PANDA-Tesis-Ingenieria-Electronica\PANDA_contexto_tesis.txt
+Lo complementa PANDA_contexto_firmware.txt (misma carpeta), que es la fuente
+para todo lo que sea firmware: pinout, parámetros, pruebas paso a paso.
+Si algo de acá choca con el deck del Hito 2, manda esto y la diferencia está
+listada en la sección 12 como corrección pendiente.
+
+Cómo hablarle al usuario (Facu):
+- Español rioplatense informal, directo y conciso.
+- Nunca usar guiones largos ni punto y coma. Es regla dura, también dentro de
+  documentos, código comentado y láminas.
+- No decirle "che".
+- Ecuaciones en LaTeX cuando se escriban en el chat.
+- Razonamiento paso a paso, con verificación numérica y analogías concretas.
+- Antes de generar código o archivos grandes, explicar primero qué se va a
+  hacer y esperar el ok.
+- Cuando pide una lámina, quiere un pptx con esa sola lámina, no el deck entero.
+- Revisa y discute las derivaciones. Si algo está mal hay que decirlo, y si el
+  error es de la IA, admitirlo sin vueltas.
+- Voz de ingeniero, no de robot. Nada de relleno.
+- Facu autorizó commitear sin preguntar. Pushear o borrar ramas en GitHub,
+  preguntar antes.
+
+Qué NO asumir:
+- El prototipo NO está construido. El firmware está escrito y compila, pero
+  NUNCA corrió en una placa (sección 7).
+- El grupo NO tiene contacto formal con ADIFSE, SOFSE ni ningún operador.
+- Ningún precio del BOM está cotizado formalmente. Son valores de referencia.
+- No hay feedback escrito del Hito 2 en los archivos. Solo se sabe que fue
+  "excelente, muy buen feedback en todo".
+- No hay material del Hito 3 empezado en los archivos locales (al 1-oct).
+
+
+1. QUIÉNES, DÓNDE Y CUÁNDO
+--------------------------------------------------------------------------------
+Autores: Juan Ignacio Pla, Facundo Caviglia (Facu) y Joaquín Torino.
+Institución: ITBA, Ingeniería Electrónica.
+Materia: 25.32 Proyecto Integrador (tesis de grado). La cátedra los conoce como
+"Grupo V2V" porque el proyecto arrancó como asistente de sobrepaso V2V y pivotó.
+Coordinador de cursada: Ing. Alejo Figueroa. Docentes: Walter Orchessi, Manuel
+Carrillo del Pino, Pablo Regazzoni, Ignacio Gasparini, Alejo Figueroa.
+Capacidad: 3 integrantes por 6 h semanales = 18 h/semana. Desde el 1-oct
+quedan unas 9 semanas, o sea unas 160 h hasta el 2 de diciembre.
+Presupuesto: sin financiamiento del ITBA. El prototipo lo paga el grupo.
+
+Calendario que los rige (cronograma 25.32, termina el 9-dic-2026):
+- Hito 0 y Hito 1: presentados el 12-ago-2026.
+- Hito 2 (PDR, diseño preliminar): entrega 26-ago, presentado 9-sep-2026.
+  Resultado: excelente, muy buen feedback en todo lo presentado.
+- Hito 3 (CDR, diseño crítico): ENTREGA DE MATERIAL 7-OCT (en 6 días desde
+  este documento), feedback 14-oct, presentación 21-oct-2026. Máximo 20 min.
+- Hito 4 (TRR, validación y cierre): entrega 11-nov, feedback 25-nov,
+  presentación final 2-dic-2026. Máximo 20 minutos.
+- El calendario "2026-2C" que llega a 2027 es de otra instancia de la materia y
+  NO les aplica. De ese documento solo se toma el contenido exigido por hito.
+
+Contenido exigido por la cátedra:
+- Hito 3: ingeniería de detalle, diseño electrónico y mecánico, hardware con
+  diagrama de bloques, hardware con detalle de selección y cálculo, software
+  con diagramas de flujo y complejidad, plan de pruebas de hardware y software.
+- Hito 4: validación de hardware, validación de software, estudios de
+  confiabilidad.
+Cada hito tiene nota con peso de parcial y hay que aprobarlo para seguir.
+
+Consecuencia práctica: las placas llegan la semana del 5-oct, o sea que la
+entrega del 7-oct es casi toda documental. Los primeros resultados de banco
+entran recién en la presentación del 21-oct.
+
+
+2. EL PROBLEMA
+--------------------------------------------------------------------------------
+Datos base (JST, documento para el 15° Congreso del ILCAD, 2023):
+- Argentina tiene 23.304 km de vías operativas y 13.843 pasos a nivel (PAN).
+- 1.122 de esos PAN están en el AMBA.
+- La región Centro concentra PAN en rutas, polos agroindustriales y colisiones.
+- Casos de alto riesgo relevados por la JST: Cintra (Córdoba), Puerto General
+  San Martín (Santa Fe) y Rufino (Santa Fe, RN 7, ramal 54 de la Línea San
+  Martín, operado por BCyL).
+
+Accidentes mostrados en la lámina 2 (JST, 2022): 171 y 238 colisiones, con 22 %
+y 14 % de víctimas fatales, separadas entre PAN peatonales y vehiculares. La
+lectura del grupo es que el caso peatonal tiene mayor letalidad (22 %). Verificar
+el emparejamiento exacto contra el documento de la JST antes de citarlo (el
+texto del pptx no permite confirmarlo porque las cifras están en grupos).
+
+Dos problemáticas que ataca PANDA (lámina 2):
+1. SEGURIDAD: alto número de accidentes con vehículos y peatones.
+2. INEFICIENCIA: los sistemas actuales no permiten saber la situación actual
+   del tren (dónde está y a qué velocidad viene).
+
+Soluciones actuales: circuito de vía o vía isla (detección puntual), barreras
+manuales con guardabarrera, señalización pasiva (cruz de San Andrés) y campañas
+de concientización de la JST. Ninguna informa la posición ni la velocidad real
+del tren.
+
+El argumento técnico central, estático contra dinámico:
+El SETOP 7/81 dimensiona con valores de tabla, no con datos medidos. La Tabla I
+(punto 5.2.3.1) da la distancia sobre la vía en función de la velocidad máxima
+del ferrocarril en la zona del cruce y de la separación entre rieles dc:
+  dc <= 5 m:        134 m a 40 km/h ... 400 m a 120 km/h
+  5 < dc <= 10 m:   156 m a 40 km/h ... 467 m a 120 km/h
+  10 < dc <= 15 m:  178 m a 40 km/h ... 534 m a 120 km/h
+El punto 8.6.12 exige que las barreras estén completamente bajas antes de que
+llegue el tren, tomando como mínimas las condiciones de la Tabla I.
+Dividiendo distancia por velocidad, la tabla equivale a un tiempo casi constante:
+134 m / 11,11 m/s = 12,1 s y 400 m / 33,33 m/s = 12,0 s para dc <= 5 m (unos
+14 s y 16 s para las otras filas). O sea, el sistema supone siempre la velocidad
+máxima de la zona. PANDA mide la velocidad y posición reales.
+
+ACLARACIÓN IMPORTANTE SOBRE LA INEFICIENCIA (nueva, hay que contarla bien):
+Con el invariante CIERRE = OR (sección 3) la barrera nunca cierra más tarde
+que hoy, porque el circuito de vía sigue pidiendo el cierre igual que antes.
+Entonces, en un cruce que YA tiene barrera automática, PANDA NO acorta el
+tiempo de barrera baja de un tren lento. Solo puede agregar cierre.
+La frase "un tren lento cierra la barrera mucho antes de lo necesario" es
+correcta como diagnóstico del problema, pero no hay que presentarla como algo
+que el prototipo resuelve. Lo que PANDA sí aporta contra la ineficiencia, en el
+alcance de la tesis:
+- Información real del tren (capa de inteligencia): posición, velocidad, ETA
+  real, app de horarios, datos para el operador. Es lo que dice la lámina 2.
+- Cruces sin barrera automática (cruz de San Andrés, guardabarrera, la gran
+  mayoría de los 13.843): PANDA es la única señal activa y avisa solo cuando
+  el tren de verdad se acerca.
+- A futuro, etapa 8 del plan de validación: con PANDA certificado con un nivel
+  de integridad suficiente, el ETA medido podría retrasar el inicio del cierre
+  de un tren lento. Eso rompe el OR actual, exige SIL y autorización de ADIFSE,
+  y queda fuera de la tesis. Decirlo como evolución, no como resultado.
+
+Hueco normativo que llena PANDA: todo el capítulo de señalización activa del
+SETOP está escrito mirando al vehículo. Del peatón solo aparece la zona de cruce
+diferenciada (8.3.1) y las defensas (8.4.2 y 9.13). No hay ningún aviso activo
+al peatón.
+
+
+3. LA SOLUCIÓN Y SU PRINCIPIO RECTOR
+--------------------------------------------------------------------------------
+PANDA agrega una capa redundante e independiente de detección al paso a nivel,
+SIN reemplazar ni intervenir el sistema de control instalado. Esto se acordó con
+los profesores: el circuito de vía existente (que cortocircuita la vía cuando
+pasa la rueda) se queda. PANDA suma, nunca resta seguridad.
+
+Nodos:
+- NODO TREN: embarcado en la formación. Obtiene posición, velocidad, rumbo y
+  sentido, y emite un beacon periódico por radio.
+- NODO CRUCE: en el paso a nivel. Recibe beacons, calcula tiempo de arribo,
+  decide localmente y acciona la señalización peatonal y la salida hacia la
+  lógica de barrera existente.
+- SERVIDOR (capa de inteligencia): recibe telemetría por 4G/LTE-M en el
+  producto (Wi-Fi en el prototipo, sección 6).
+
+Dos capas (lámina 3):
+- CAPA DE SEGURIDAD: localizar trenes, detectar situaciones de peligro, activar
+  el sistema de protección. Opera sola.
+- CAPA DE INTELIGENCIA: comunicación entre dispositivos, información en tiempo
+  real, mantenimiento predictivo. Fuera del lazo de seguridad. Si se cae, la capa
+  de seguridad sigue igual. La separación además baja las exigencias normativas
+  sobre la capa de inteligencia (nota de la lámina 3).
+
+Detección redundante 1oo2 (lámina 5):
+Canal 1 = circuito de vía existente (detección puntual, comunicación cableada
+binaria). Canal 2 = detección embarcada PANDA (radioenlace).
+Ejemplo ilustrativo: P1 = P2 = 1e-3 por canal, falla conjunta 1e-6, mil veces
+menor. Vale solo si los canales son independientes (evitar fallas de causa común).
+Ojo: en un cruce sin circuito de vía (peatonal pasivo) no hay 1oo2, PANDA es
+el único canal. Ahí PANDA sigue sumando (antes no había nada activo), pero no
+se puede citar la mejora de mil veces.
+
+INVARIANTE DE SEGURIDAD (lo más importante de todo el proyecto):
+  CIERRE   = OR   La barrera cierra si lo pide PANDA o si lo pide el circuito de vía.
+  APERTURA = AND  La barrera abre solo si PANDA y el circuito de vía coinciden en
+                  vía libre.
+Consecuencia: ninguna falla de PANDA puede impedir un cierre ni adelantar una
+apertura. Si PANDA se cae, el cruce degrada al comportamiento actual, nunca peor.
+Un cierre innecesario por PANDA genera demora vial pero no riesgo (severidad 4).
+
+Precisión que agregó el firmware (contarla en el Hito 3): PANDA entrega DOS
+contactos al controlador de barrera, "PANDA libre" y "PANDA operativo", los dos
+con lógica energizado = permiso. Sin el segundo, un PANDA muerto con apertura
+en AND dejaría la barrera baja para siempre, y eso tampoco es "comportamiento
+actual". La regla completa es:
+  con PANDA operativo:   baja si (PANDA pide cierre) O (vía ocupada)
+  sin PANDA operativo:   baja si (vía ocupada), igual que hoy
+Un corte de cable o de alimentación desenergiza los dos relés: PANDA pide
+cierre y a la vez se declara no operativo, así que la barrera sigue al
+circuito de vía. Ninguna combinación de fallas de PANDA abre una barrera con
+la vía ocupada.
+
+Reglas fail-safe:
+- "Sin datos" nunca es "vía libre". El firmware refinó E-9: un tren pasa a SIN
+  DATOS si pudo haber entrado en la zona de alerta durante su silencio, o si
+  estaba alertando y se calló más de 1 s. Un tren lejano que se aleja y se
+  calla no bloquea el cruce. Hay que reescribir E-9 así (sección 13).
+- El semáforo peatonal tiene dos estados: "cruce no seguro" o apagado. Nunca
+  afirma que se puede cruzar. No hay verde. Apagado no afirma nada.
+- R-28 y E-24: el estado sin datos debe ser menor al 2 % del tiempo en 24 h,
+  para que el peatón no aprenda a ignorar la señal.
+- Un canal de radio bloqueado produce sin datos, y sin datos degrada al
+  comportamiento actual.
+
+Idea adicional de producto: app o web con posición de trenes en tiempo real y
+horarios reales de llegada por estación, alimentada por la capa de inteligencia.
+
+
+4. CLIENTE Y ACTORES
+--------------------------------------------------------------------------------
+Cliente contractual: ADIFSE (Administración de Infraestructuras Ferroviarias
+S.E.). Por la Ley 26.352 (arts. III y VIII) administra la infraestructura y los
+sistemas de control de circulación, así que es quien puede evaluar e incorporar
+la tecnología. El deck lo aplica incluso al nodo que va arriba del tren.
+Refuerzo: SETOP 7/81 art. 9.16, la señalización activa es siempre
+responsabilidad de proyecto y ejecución del ferrocarril y nunca se puede derivar
+al organismo vial ni a la comuna.
+
+Otros actores:
+- SOFSE / Trenes Argentinos: operador de pasajeros. Instalar equipos en
+  formaciones necesita autorización del operador.
+- Cargueras (Ferroexpreso Pampeano FEPSA, Nuevo Central Argentino NCA, Ferrosur
+  Roca, Belgrano Cargas y Logística BCyL/TAC): candidatas a piloto más rápido
+  porque controlan vía y formación en su ramal. Ojo: sus trenes miden de 1 a
+  2 km, y el firmware hoy supone formaciones de hasta 250 m (sección 12).
+- JST: no es cliente, da visibilidad institucional y sus estudios validan el
+  problema.
+- CNRT: regulador y homologación.
+- ENACOM: espectro.
+- Municipios: aliados de presión y posible cofinanciación.
+
+Argumento de venta regulatorio: SETOP 6.1.12 dice que si no se puede lograr la
+fiabilidad imprescindible de las barreras, la exigencia pasa a ser un cruce a
+distinto nivel (obra civil muy cara). PANDA se posiciona como alternativa que
+mejora la fiabilidad sin obra civil.
+
+
+5. DECISIONES DE ARQUITECTURA DEL PRODUCTO (presentadas en el Hito 2)
+--------------------------------------------------------------------------------
+5.1 Detección (láminas 4 y 6)
+Alternativas: puntual, embarcada, en área, distribuida. Elegida: puntual
+existente + embarcada, en 1oo2.
+Sensado embarcado, comparación cuantitativa (lámina 6):
+  IMU Bosch BMI088: no da posición, deriva, hasta 2 kHz, 0,02 W, USD 9.
+  Odometría del vehículo: precisa pero hay que tocar el tren. Descartada.
+  GNSS + IMU (ELEGIDA): 1,5 m CEP sin huecos, 0,05 m/s, 10 Hz, 0,05 W, USD 27.
+  GNSS u-blox MAX-M10S solo: 1,5 m CEP, 0,05 m/s, hasta 10 Hz, 0,03 W, USD 18.
+  GPS u-blox NEO-6M: una constelación, 2,5 m CEP, 5 Hz, 0,11 W, USD 5.
+La IMU NO es para navegar. Sirve para: continuidad unos segundos sin cielo,
+detectar arranque y detención, y sobre todo verificar plausibilidad del GNSS
+(si el GNSS dice que el tren saltó 200 m y el acelerómetro no vio aceleración,
+la posición se marca inválida). Es acción de diseño del DFMEA contra el modo de
+RPN 120. El MAX-M10S además reporta interferencia y spoofing al host.
+
+5.2 Comunicación (láminas 8 a 11)
+Tecnologías evaluadas: LoRa 915 MHz ISM, celular 4G/LTE-M, radioenlace UHF con
+licencia, comunicación cableada. También 2,4 GHz (Wi-Fi o BLE), descartada
+temprano por ocupación y alcance (nota de la lámina 8).
+Decisión: el DISPOSITIVO REAL usa radioenlace UHF con licencia. El argumento es
+que un sistema de seguridad no debería depender de una banda ISM compartida.
+Licencia y cifrado son cosas distintas: la licencia da exclusividad, no
+autenticidad. Se mantiene AES-128 + CMAC + contador anti repetición (ventana 2 s).
+Celular queda solo como telemetría, nunca en el lazo de seguridad.
+
+Radios comparadas (lámina 9):
+  Raveon RV-M7-GX: radiomódem industrial con GPS interno, 0,5 a 5 W, 1200 a
+    19200 bps, -116 dBm a 4800 bps, -30 a +60 °C, aprox USD 350. ELEGIDA.
+  SATEL RF4+: 403-473 MHz, 0,01 a 1 W, hasta 28800 bps, -25 a +55 °C, USD 900.
+  LimeSDR USB: 10 mW, necesita PC, aprox USD 300. Descartada.
+  SX1262 + amplificador propio: 150-960 MHz, 2 W con PA, -118 dBm, -40 a +85 °C,
+    USD 40, pero diseño RF y homologación a cargo del grupo.
+Criterios de decisión y pesos (lámina 10): seguridad funcional 30 %, costo por
+cruce 25 %, alcance y cobertura 20 %, complejidad 15 %, consumo y autonomía 10 %.
+Puntaje 1 a 5 por criterio, suma ponderada sobre 5.
+Resultado (lámina 11): Raveon 3,450, SATEL 2,875, SX1262 2,550, LimeSDR 1,900.
+
+Parámetros de diseño del enlace real:
+- Banda asignada de 460 a 463,7625 MHz, potencia 2 W, canal único compartido.
+- Datos Raveon: RX < 90 mA, TX 1,2 A a 2 W, reposo < 25 mA, 9,5 a 16 VDC,
+  ciclo de trabajo 100 % a 2 W y 25 % a 5 W sin disipador, vuelta TX/RX < 3 ms,
+  despertar < 5 ms desde reposo, serie DB-9 RS-232/485/422 con comandos AT.
+  Para 460 MHz corresponde la variante de banda C (450-480 MHz).
+- Por qué 2 W y no 5 W: con modelo de dos rayos (antena tren 4 m, cruce 6 m) la
+  pérdida a 2 km es unos 104 dB, llegan unos -68 dBm contra -116 dBm de
+  sensibilidad, 48 dB de margen. Pasar a 5 W compra 4 dB y cuesta consumo, calor
+  y trámite. E-5 pide 1.500 m y un tren a 100 km/h recorre 1,67 km en 60 s.
+- Acceso múltiple: ALOHA no cierra (con 5 trenes se pierde 1 de cada 5 beacons y
+  la probabilidad de dos pérdidas seguidas es 5 %, contra E-24 que pide < 2 %).
+  Solución: TDMA con ranuras sincronizadas al PPS del GNSS, estilo SOTDMA de AIS.
+  Esto le da función al GNSS del nodo cruce: referencia de tiempo.
+- TASA DEL BEACON EN EL PRODUCTO (aclaración nueva): el beacon real quedó de
+  35 bytes. A 9600 bps ocupa 35 × 8 / 9600 = 29 ms, más preámbulo y vuelta de
+  portadora unos 40 ms por ranura, unas 25 ranuras por segundo. A 2 Hz por tren
+  (E-3, 500 ms) entran unos 12 trenes por canal. A 10 Hz, como el prototipo,
+  entrarían solo 2. Por eso el producto con Raveon va a 2 Hz y el prototipo con
+  LoRa va a 10 Hz. Hay que decirlo explícitamente (sección 12) y, si da el
+  tiempo, correr también el prototipo a 2 Hz para mostrar que la lógica aguanta
+  la tasa del producto.
+- Radio propia a futuro: ahorro aprox USD 460 por unidad contra USD 32.000 de
+  industrialización y homologación, equilibrio en unas 70 unidades. Plan de
+  producto: primero radio comercial homologada, a escala radio propia SX1262+PA.
+
+5.3 Microcontrolador (láminas 14 y 15)
+Comparados: ESP32-S3, STM32F407, FRDM-K64F, Raspberry Pi 4/CM4.
+ELEGIDO: ESP32-S3 de Espressif (módulo precertificado ESP32-S3-WROOM-1 en la
+placa propia). Motivos: costo mínimo (USD 4), acelerador AES por hardware, dos
+núcleos, 3 UART y 4 SPI que alcanzan para UHF, GNSS y 4G.
+Contras declarados: puertos serie al límite, solo hasta +85 °C, y se perdió
+X-CUBE-STL (biblioteca de autotest certificada TÜV SIL 2 del STM32). El
+autodiagnóstico se construye a mano: watchdog externo TPL5010, autotest de RAM y
+flash al arranque, verificación cruzada GNSS contra IMU y salida a estado seguro
+por defecto. En el firmware ya hay autotest criptográfico al arranque (si falla
+el nodo no arranca), vigilancia de salidas a 300 ms y watchdog de tareas a 5 s.
+Nota histórica: antes se había elegido STM32F407. Ya no es la decisión vigente.
+
+5.4 Decisión y alerta (lámina 13)
+Decisión local en el nodo cruce. Señalización activa sonora y lumínica.
+Real: óptica LED roja de 200 mm (sin destellador, en 12 o 24 VDC), doble cadena
+de LED con medición de corriente por cadena, bocina industrial IP65 de 100 dB a
+1 m, columna de 2,40 m, gabinete con pantalla negra y visera según Decreto
+779/95 Anexo L cap. VII punto 36 inc. c. NO comprar semáforo peatonal con verde.
+Franja luminosa en el piso: mejora futura.
+Umbral de decisión implementado: ETA mínimo <= 25 s (E-8b). Sale de 12 s de la
+Tabla I (barrera baja antes del tren) + 5 s de preaviso (8.6.6) + 8 s de margen
+para latencias y maniobra del brazo.
+
+5.5 Alimentación (láminas 16 a 20)
+Alternativas: directa, solar, auxiliar/UPS. Elegida: red + respaldo con
+conmutación automática. No independiza causas de falla como el 1oo2, elimina un
+punto único de falla en el subsistema crítico (radio, decisión, micro).
+Topologías comparadas (lámina 19): "fuente + baterías" (red a AC/DC, cargador,
+baterías que alimentan a PANDA por DC/DC, sin conmutación, más eficiente, más
+barata en baja potencia, requiere diseño) contra "UPS offline" (compra
+certificada pero cara, menos eficiente, sobredimensionada, conmuta en decenas
+de ms). En la lámina 21 quedó: red del cruce 220 Vac + fuente 24 V + baterías,
+y en el BOM figura BMS + 3 celdas 18650. La elección de química y capacidad
+sigue abierta (sección 12, punto 9).
+Consumo estimado del nodo cruce: unos 4 W promedio. Ocho horas son 32 Wh.
+
+5.6 Arquitectura mecánica
+Solo la antena va a la intemperie. La electrónica va en el armario del cruce y
+en el compartimento de equipos del tren. Un único módulo PANDA para ambos nodos
+con poblado diferenciado (la IMU solo en el nodo tren). Un diseño, una
+homologación, un herramental.
+
+
+6. DISPOSITIVO REAL CONTRA PROTOTIPO (lámina 21 actualizada al firmware real)
+--------------------------------------------------------------------------------
+Principio: el dispositivo real y el prototipo comparten la arquitectura y la
+lógica. Cambian la radio de seguridad, el transporte de la telemetría y la
+interfaz física. El prototipo demuestra que la lógica es correcta, no que el
+equipo está homologado.
+
+Subsistema          | Dispositivo real                   | Prototipo de tesis (hoy)
+--------------------|------------------------------------|--------------------------------
+Plataforma          | Placa propia con ESP32-S3-WROOM-1  | LILYGO T-Beam Supreme 915 MHz
+Procesador          | ESP32-S3                           | ESP32-S3 (el de la T-Beam)
+Posición            | u-blox MAX-M10S                    | MAX-M10S, UBX NAV-PVT a 10 Hz
+Inercial            | Bosch BMI088, solo nodo tren       | QMI8658 de la T-Beam
+Radio de seguridad  | Raveon RV-M7-GX, 460 MHz, 2 W      | SX1262 LoRa SF7/500 kHz, 925 MHz
+Tasa del beacon     | 2 Hz (limitado por 9600 bps)       | 10 Hz, una por época GNSS
+Acceso múltiple     | TDMA por PPS, ~25 ranuras/s        | TDMA por PPS, 5 ranuras de 20 ms
+                    |                                    | por trama de 100 ms
+Telemetría          | SIMCom SIM7080G LTE-M              | Wi-Fi por hotspot del celular a
+                    |                                    | Traccar (SIM7080G no comprado)
+Circuito de vía     | Sensor de vía actual               | Interruptor con optoacoplador
+                    |                                    | (hoy simulado con "v" en consola)
+Señal visual        | Óptica LED roja 200 mm             | LED rojo (GPIO 39 + transistor)
+Aviso sonoro        | Bocina IP65, 100 dB a 1 m          | Amplificador + parlante o bocina
+                    |                                    | (GPIO 48 da PWM 2,5 kHz)
+Salida a barrera    | Relé 24 V 10 A, salida simple      | Dos relés: "PANDA libre" y "PANDA
+                    |                                    | operativo" hacia la maqueta
+Barrera             | Controlador y barrera existentes   | Maqueta con su propio controlador
+Alimentación        | 220 Vac + fuente 24 V + baterías   | 18650 en la T-Beam o power bank
+Registro            | Flash del ESP32 como buffer + server| microSD (CSV a 10 Hz) + Traccar
+Gabinete y antena   | IP67, ensayos IEC 61373, EN 50155  | Caja impresa y antena látigo
+
+Por qué Wi-Fi en lugar del SIM7080G en el prototipo: la telemetría está fuera
+del lazo de seguridad y el firmware la aísla en el otro núcleo. Cambiar Wi-Fi
+por LTE-M cambia solo el transporte, no la interfaz ni la lógica. Esto hay que
+corregirlo en la lámina 21, que todavía dice SIM7080G en el prototipo.
+
+Nota sobre el T-Beam: en la defensa se dijo que el T-Beam es la PLATAFORMA DE
+PUESTA EN MARCHA DEL FIRMWARE, no el prototipo final. Trae los mismos chips que
+la placa propia (ESP32-S3, SX1262, MAX-M10S), así que el firmware se desarrolla
+en paralelo a la fabricación del PCB. El Gantt presentado incluye diseño,
+fabricación y puesta en marcha de placa propia. Ver sección 12 punto 14.
+
+Nota sobre la IMU del prototipo: la QMI8658 de la T-Beam alcanza para la
+plausibilidad GNSS contra aceleración. La BMI088 es la elegida para el producto
+por robustez a vibración, y se puede sumar después como módulo SPI.
+
+Nota sobre el SIM7080G: no puede usar celular y GNSS al mismo tiempo, así que su
+GNSS interno NO sirve como tercera fuente. Tampoco el GPS interno del Raveon está
+en la cadena de seguridad (es caja negra, sin datos crudos).
+
+
+7. ESTADO REAL DEL PROTOTIPO AL 1-OCT
+--------------------------------------------------------------------------------
+7.1 Hardware
+- Comprado: LILYGO T-Beam Supreme (V3), 915 MHz, con MAX-M10S. Las placas
+  llegan la semana del 5-oct. CONFIRMAR CUÁNTAS (mínimo dos para el enlace,
+  ideal tres para probar dos trenes en TDMA).
+- Tienen microSD. Alimentación prevista: 18650 sin protección de punta plana
+  o power bank por USB-C.
+- Nada más comprado que se sepa (confirmar).
+
+7.2 Firmware (repo github.com/facucaviglia/PANDA-Tesis-Ingenieria-Electronica,
+carpeta firmware/panda-node, detalle completo en PANDA_contexto_firmware.txt)
+Un solo código con tres roles elegidos al compilar:
+- registrador: caja negra. GNSS a 10 Hz e IMU a ~224 Hz a la microSD, posición
+  en vivo a Traccar por el hotspot del celular.
+- tren: lo anterior + beacon LoRa de 35 bytes cifrado (AES-128-CTR) y
+  autenticado (CMAC), uno cada 100 ms en su ranura TDMA alineada al PPS,
+  contador anti repetición persistente.
+- cruce: recibe y valida beacons (CRC, CMAC, contador, frescura), lógica de
+  decisión con ETA mínimo, estados APAGADO / NO SEGURO / FALLA, OR y AND con el
+  circuito de vía, salidas físicas con energizado = permiso, vigilancia.
+Herramientas de PC: verificación criptográfica con vectores oficiales,
+simulador de trenes por USB (10 escenarios) y modelo de referencia en Python.
+Estado de fases:
+  1 registrador                          hecha, compila, sin probar en placa
+  2 enlace tren y cruce                  hecha, compila, sin probar en placa
+  3 lógica de decisión del cruce         hecha, verificada contra el modelo
+  4 IMU (plausibilidad, quieto/marcha)   EN PAUSA hasta tener datos reales
+Recompilado el 1-oct-2026: los tres roles compilan sin errores (RAM 9 a 11 %,
+flash 16 a 17 %).
+Decisiones del prototipo que NO se reabren: LoRa en 915 MHz (FSK descartado),
+beacon a 10 Hz, 35 bytes, TDMA de 100 ms por PPS, GNSS por UBX NAV-PVT.
+
+7.3 Qué falta para el prototipo completo (lo que se va a mostrar en el Hito 4)
+- Maqueta de barrera con su PROPIO controlador (otro micro barato, por ejemplo
+  un Arduino Nano o un ESP32 cualquiera). Recibe los dos contactos de PANDA y
+  el interruptor de vía, aplica la regla de la sección 3, maneja el servo del
+  brazo, las dos luces alternadas cada 0,5 s (8.6.5), el preaviso de 5 s antes
+  de bajar (8.6.6) y la campana. Así se muestra que PANDA solo entrega un
+  contacto y no controla el motor, igual que en el producto. Este firmware NO
+  está escrito.
+- Placa de interfaz del nodo cruce: dos relés con aislación bobina-contacto de
+  al menos 2,5 kV (E-21, los módulos baratos tipo SRD dan 1,5 kV y no cumplen),
+  driver del LED rojo, entrada optoacoplada del circuito de vía, driver de la
+  bocina o amplificador.
+- Señal sonora que llegue a 95 dB a 1 m (E-20). Un buzzer en un GPIO no llega:
+  hace falta bocina de 12 V conmutada por transistor o amplificador + parlante.
+- Watchdog externo TPL5010 (DFMEA).
+- Doble cadena de LED con medición de corriente. OJO: casi no quedan GPIO
+  libres en la T-Beam (quedan 3, 45 y 46, y 45 y 46 son de arranque). Conviene
+  colgar del QWIIC (I2C) un medidor tipo INA219 o INA3221 y, si hace falta, un
+  expansor de E/S.
+- Antenas de 915 MHz decentes, pigtails y atenuadores SMA (opcionales).
+- Sonómetro (o app de celular calibrada) para medir E-20.
+- Si se quiere mostrar LTE-M: SIM7080G + SIM IoT + antena. No es necesario para
+  la tesis si se declara el Wi-Fi como sustituto (sección 6).
+
+
+8. MARCO NORMATIVO Y LEGAL
+--------------------------------------------------------------------------------
+Tabla de la lámina 31 (factibilidad legal), vigente:
+- SETOP 7/81: fija el tiempo mínimo de cierre a partir de la velocidad de tabla y
+  exige aviso acústico y visual antes del descenso. PANDA respeta ese mínimo y
+  solo puede anticiparlo, nunca acortarlo. El art. 6.1.12 abre la puerta a
+  mejorar la fiabilidad.
+- Ley 26.352: ADIFSE es el cliente contractual, incluido el nodo embarcado.
+- ENACOM, CABFRA 2024 y Res. 1132/2023: el uso exclusivo de una frecuencia exige
+  asignación. 902 a 928 MHz es banda de uso compartido sin licencia individual,
+  con equipo homologado. Dispositivo real en 460 a 463,7625 MHz, atribuida a
+  móvil terrestre, bajo la figura MEVHF con titularidad de ADIFSE (nunca del
+  grupo ni del proveedor). Prototipo en 915 a 928 MHz (canal fijo 925 MHz).
+- CNRT Res. 1244/2014: los servicios ferroviarios del AMBA deben usar TETRA en
+  800 MHz para radiocomunicaciones móviles operativas. PANDA no es comunicación
+  operativa y se mantiene deliberadamente fuera de esa red para no compartir modos
+  de falla con el operador (preservar el 1oo2).
+- IEC 61373 (vibración y choque), EN 50155 (electrónica embarcada), EN 50124-1
+  (coordinación de aislación, de acá sale la aislación de la salida a barrera),
+  IEC 60529 (IP67), EN 50125-1 e IEC 60068-2-1/2-2 (ambiente y temperatura):
+  tomados como R-18 a R-21. Los ensayos ambientales quedan fuera del alcance de
+  la tesis como trabajo futuro (requieren laboratorio externo).
+- IEC 61508 como referencia de seguridad funcional.
+- Conclusión presentada: ninguna norma bloquea el prototipo. Espectro y
+  homologación son de la etapa de despliegue y responsabilidad del cliente.
+
+Citas textuales verificadas del SETOP 7/81 que conviene tener:
+- 8.6.4: barreras automáticas con par de luces rojas de aprox 0,20 m, separadas
+  0,75 m, a aprox 2,40 m sobre la base.
+- 8.6.5: encienden alternadamente cada medio segundo, visibles aun de día.
+- 8.6.6: comienzan como mínimo 5 s antes de que empiece a bajar el brazo y
+  siguen hasta que vuelve a la vertical (origen de R-22 y E-19).
+- 8.6.7: un toque de campana por segundo, 95 dB o más a 1 m. En zona urbana la
+  comuna puede bajarlo a 60 dB con el brazo horizontal, restituyendo si se rompe
+  el brazo (origen de R-23 y E-20).
+- 8.6.12: brazos completamente bajos antes de la llegada del tren, con la Tabla I
+  como condición mínima.
+- 8.6.13: se puede levantar la barrera sin que pase el tren por condiciones
+  especiales de marcha o detención de emergencia.
+- 8.6.15: semáforos viales concurrentes subordinados a las barreras.
+- 9.16: la señalización activa es siempre responsabilidad del ferrocarril.
+- Decreto 747/88 referenciado junto con 9.16.
+
+Implicancias legales prácticas para las pruebas del prototipo:
+- Transmitir en 915 MHz con placas de desarrollo es razonable en banco y en un
+  ámbito académico, pero la banda es de uso compartido con equipo homologado.
+  En banco el firmware usa 2 dBm por defecto. Para campo se pasa a 22 dBm
+  (158 mW) con el comando "w". PENDIENTE: confirmar en la norma de ENACOM para
+  902 a 928 MHz el límite de potencia para un canal fijo de 500 kHz antes de
+  usar 22 dBm en la calle. No presentarlo como equipo habilitado para operar.
+- NO conectar nada a una barrera real ni instalar nada en una formación o en un
+  cruce real sin autorización escrita de ADIFSE y del operador. Por el art. 9.16
+  cualquier intervención de señalización activa es del ferrocarril.
+- Ensayo en tren: el nodo tren viaja como equipaje de un pasajero, pegado a la
+  ventanilla desde adentro, sin fijar nada al tren ni sacar nada por fuera. El
+  nodo cruce va en la vereda, fuera del alambrado, sin tocar barreras ni
+  señales. Llevar una nota del ITBA que explique el ensayo académico.
+- Ensayo de alcance: en calle o ruta, con el nodo tren en un auto o a pie,
+  nunca sobre la vía.
+- Transmitir en 460 MHz sin asignación está prohibido. El ensayo a 915 MHz es
+  una cota conservadora del enlace real: la diferencia de pérdida en espacio libre
+  es 20·log10(915/460) = 5,96 dB a favor de 460 MHz. Única salvedad: la primera
+  zona de Fresnel a 460 MHz es más grande (unos 15 m de radio a 1,5 km contra
+  10 m a 915 MHz), así que pide más altura de antena.
+- Error ya corregido: 433 MHz NO es ISM en la Región 2. En Argentina la banda
+  libre es 902 a 928 MHz.
+
+
+9. MATRIZ DE CUMPLIMIENTO: QUÉ PIDE CADA OBJETIVO Y CÓMO SE DEMUESTRA
+--------------------------------------------------------------------------------
+Es la base del plan de pruebas del Hito 3 y de la validación del Hito 4.
+Estado: HECHO = implementado y verificado. IMPL = implementado, falta medir en
+placa. FALTA = no implementado. FUERA = fuera del alcance, se declara.
+Las pruebas P1 a P6 son las de la sección 11 de PANDA_contexto_firmware.txt.
+
+9.1 Normativa y señales
+Objetivo                        | Cómo lo cumple el prototipo         | Cómo se mide              | Estado
+--------------------------------|-------------------------------------|---------------------------|-------
+SETOP 8.6.12 y Tabla I: barrera | Alerta con ETA mínimo <= 25 s       | ETA predicho contra paso  | IMPL
+baja antes del tren (~12 s)     | (12 + 5 + 8 de margen)              | real marcado con el botón |
+                                |                                     | (P5 y P6). Anticipación   |
+                                |                                     | medida >= 25 s            |
+8.6.5 luces alternadas 0,5 s    | Controlador de la maqueta           | Video o analizador lógico | FALTA
+8.6.6 / R-22 / E-19 preaviso    | Controlador de la maqueta: luces y  | Analizador lógico entre   | FALTA
+5 s antes de bajar el brazo     | sonido 5 s antes de mover el servo  | luz y servo               |
+8.6.7 / R-23 / E-20 campana     | Firmware: 1 toque por s (200 ms a   | Sonómetro a 1 m           | IMPL en
+1 por s, >= 95 dB a 1 m         | 2,5 kHz). Falta el hardware sonoro  |                           | firmware,
+                                |                                     |                           | FALTA HW
+Decreto 779/95: óptica roja,    | LED rojo único, dos estados         | Inspección                | IMPL
+sin verde                       | (no seguro o apagado)               |                           |
+R-24 a R-26: OR para cerrar,    | Firmware + dos contactos + regla en | Fallas inducidas con la   | IMPL,
+AND para abrir                  | el controlador de la maqueta        | maqueta. Métrica: evento  | maqueta
+                                |                                     | "vía ocupada con PANDA en | FALTA
+                                |                                     | vía libre", y nunca       |
+                                |                                     | barrera alta con vía      |
+                                |                                     | ocupada                   |
+R-16 / E-9: sin datos no es     | SIN DATOS refinado (sección 3)      | P3a: apagar el tren, el   | IMPL
+vía libre                       |                                     | cruce pasa a NO SEGURO en |
+                                |                                     | ~1 s                      |
+R-27: solo señalizar no seguro  | Estados APAGADO / NO SEGURO / FALLA | Inspección del código     | HECHO
+R-28 / E-24: sin datos < 2 %    | TDMA + 10 Hz                        | Ensayo de 24 h con dos    | FALTA
+en 24 h                         |                                     | placas fijas, de          | medir
+                                |                                     | decision.csv              |
+R-29 / E-22: AES-128 + CMAC +   | Implementado, autotest al arranque  | Vectores oficiales (PC,   | HECHO en
+contador, ventana 2 s           |                                     | hecho). En placa: P3d     | PC
+                                |                                     | repetición y CMAC falso   |
+R-30 / E-23: autodiagnóstico y  | Vigilancia de salidas 300 ms y      | Colgar el firmware a      | IMPL,
+watchdog independiente          | watchdog de tareas 5 s. TPL5010     | propósito y medir el      | TPL5010
+                                | externo no está                     | tiempo a estado seguro    | FALTA
+R-31: telemetría fuera del lazo | Wi-Fi en el núcleo 0, seguridad en  | Cortar el hotspot y       | IMPL
+                                | el núcleo 1                         | comparar latencia y       |
+                                |                                     | estados con y sin         |
+ENACOM 902-928 MHz              | 925 MHz, 2 dBm banco, 22 dBm campo  | Verificar límite antes    | PENDIENTE
+                                |                                     | de campo                  |
+
+9.2 Distancias, tiempos y señales de radio
+Objetivo                        | Cómo lo cumple el prototipo         | Cómo se mide              | Estado
+--------------------------------|-------------------------------------|---------------------------|-------
+E-1 GNSS >= 3 Hz                | NAV-PVT a 10 Hz                     | Consola "10.0Hz"          | IMPL
+E-2 <= 2,5 m CEP                | MAX-M10S multiconstelación          | Registrador quieto 1 h a  | FALTA
+                                |                                     | cielo abierto, radio que  | medir
+                                |                                     | contiene el 50 % de fixes |
+E-3 período del beacon          | 100 ms (la spec dice 500 ms,        | tx.csv                    | IMPL,
+                                | reescribir)                         |                           | spec a
+                                |                                     |                           | corregir
+E-5 alcance >= 1.500 m con      | LoRa SF7/500 a 22 dBm. Presupuesto  | P5 en la calle: RSSI y    | FALTA
+línea de vista                  | abajo                               | pérdida contra distancia, | medir
+                                |                                     | perfiles 0 a 3            |
+E-6 latencia <= 300 ms          | Se mide la antigüedad del dato en   | Consola "edad" y rx.csv.  | IMPL
+                                | el cruce. Esperado 50 a 150 ms      | Percentil 99 < 300 ms     |
+E-8a/b predicción y umbral      | ETA mínimo con perfil de tracción,  | Simulador (hecho) + P5/P6 | HECHO en
+configurable                    | umbral 25 s                         |                           | modelo
+E-10 alerta en <= 500 ms        | Decisión a 20 Hz (50 ms)            | t_us del beacon contra    | IMPL
+                                |                                     | cambio de salida          |
+E-12 respaldo >= 4 h            | 18650 en la T-Beam                  | Descarga completa con la  | FALTA
+                                |                                     | lectura de la PMU         | medir
+E-13 registro >= 2 h exportable | microSD, unos 50 MB por hora        | Viaje de 2 h              | IMPL
+E-21 contacto seco 2,5 kV       | Relé con rigidez >= 2,5 kV          | Hoja de datos             | FALTA
+Piso de ruido de RF del canal   | Comando "s": barrido de 25 canales  | Barrido en el lugar del   | IMPL
+("ruidos")                      | de 500 kHz entre 915,5 y 927,5 MHz  | ensayo, en especial junto |
+                                |                                     | a vías electrificadas     |
+                                |                                     | (catenaria del Roca, 3er  |
+                                |                                     | riel del Sarmiento/Mitre) |
+GNSS adentro del vagón          | Flags de interferencia y spoofing   | Viaje 1 con registrador:  | FALTA
+                                | del MAX-M10S, satélites, hAcc       | fixes perdidos y hAcc     | medir
+
+Presupuesto de enlace del prototipo para E-5 (cálculo para el Hito 3):
+- Sensibilidad LoRa SF7/500 kHz unos -117 dBm. TX 22 dBm. Pérdida máxima
+  admisible 139 dB (antenas de 0 dBi, conservador).
+- Distancia de quiebre del modelo de dos rayos con antenas a 1,5 m (auto) y
+  3 m (trípode): dc = 4·π·h1·h2 / λ = 4·π·4,5 / 0,328 = 172 m. A 1.500 m se
+  está en la zona de 40 dB por década:
+  PL = 40·log10(1500) - 20·log10(1,5 × 3) = 127,0 - 13,1 = 114 dB.
+- Margen a 1.500 m: 139 - 114 = 25 dB a 22 dBm. Con la potencia de banco
+  (2 dBm) quedan 5 dB, o sea que en la calle HAY QUE pasar a potencia de campo.
+- Adentro de un vagón hay que restar unos 10 a 20 dB por la carrocería
+  metálica (a medir en el viaje). Queda margen positivo pero justo.
+
+9.3 Fuera del alcance (se declara como trabajo futuro)
+E-14 peso e instalación, E-16 IP67, E-17 IEC 61373, E-18 rango de
+temperatura, homologación ENACOM del equipo, asignación de espectro, ensayos
+sobre infraestructura real (etapas 5 a 8 del plan de validación).
+
+
+10. DFMEA VIGENTE (láminas 22 a 24) Y MODOS A AGREGAR
+--------------------------------------------------------------------------------
+RPN = S × O × D, de 1 a 1000. La cátedra usa RPN (no NPR) y la tabla de nueve
+columnas: Función, Modo, Efecto, Causa, Controles actuales, S, O, D, RPN.
+Regla del equipo: se interviene el diseño con RPN > 100, y siempre que S sea 9 o
+10 sin importar el RPN. La aceptación por RPN bajo no aplica a seguridad de
+personas.
+
+Modo (S O D RPN inicial) -> acción -> (S O D RPN nuevo, mejora):
+- Pérdida de enlace (10 5 2 = 100). Causa: obstrucción o interferencia en canal
+  UHF. Control: timeout según distancia y velocidad. Acción: segundo receptor con
+  antena diversa y repetición del beacon. -> 10 3 2 = 60, 40 %.
+- Posición errónea no marcada inválida (10 3 4 = 120). Causa: multitrayecto y
+  pocos satélites. Control: coherencia entre posición, velocidad y rumbo.
+  Acción: validación con modelo de predicción con parámetros previos (y cruce
+  con IMU). -> 10 3 2 = 60, 50 %.
+- Falla de luminaria de no seguro (9 4 3 = 108). Acción: doble cadena de LED con
+  realimentación independiente. -> 9 2 2 = 36, 67 %.
+- Bloqueo del micro (10 3 2 = 60). Acción: watchdog externo con reinicio
+  supervisado y registro. -> 10 2 1 = 20, 67 %.
+- Corte prolongado de red (10 6 1 = 60). Control: respaldo 4 h. Acción:
+  autonomía a 8 h y aviso por umbral de carga. -> 10 4 1 = 40, 33 %.
+- Pérdida de beacons por superposición (4 2 3 = 24). Control: CSMA. Acción:
+  SOTDMA con time slots símil AIS. -> 4 1 2 = 8, 67 %.
+RPN acumulado 472 -> 224, reducción del 53 %.
+
+Modos a agregar en el Hito 3 (hay que recalcular el acumulado):
+- Suplantación de señal GNSS (spoofing). El MAX-M10S la detecta y la informa.
+- Falla de aislación galvánica de la salida a barrera.
+- NUEVO: antena del nodo tren lejos del frente de la formación. El ETA se
+  calcula con la posición de la antena. Si el nodo va en la cabina de cola
+  (las formaciones del AMBA son reversibles, así que pasa en uno de los dos
+  sentidos), el frente llega antes. Con 250 m de formación a 120 km/h son
+  250 / 33,3 = 7,5 s de atraso, casi todo el margen de 8 s del umbral de 25 s.
+  Severidad 10. Acción posible: calcular el ETA con la distancia menos el
+  largo de la formación (conservador), o mandar en el beacon el largo y la
+  posición del nodo dentro de la formación. HOY EL FIRMWARE NO LO CONTEMPLA.
+- NUEVO: dos nodos tren con la misma ranura. La ranura sale del ID módulo 5 y
+  el ID sale de la MAC si no se fija a mano. Dos trenes cerca con la misma
+  ranura colisionan siempre. Acción: asignación de ID por provisión (sin
+  repetir ranura en la misma línea) o detección de colisión y cambio de
+  ranura estilo SOTDMA.
+- Unificar control y acción del último modo: el control "CSMA" no es lo que se
+  implementa. Lo implementado es TDMA sincronizado por PPS.
+
+
+11. FACTIBILIDAD ECONÓMICA VIGENTE (láminas 25 a 30, PANDA_flujo_de_caja.xlsx)
+--------------------------------------------------------------------------------
+BOM de hardware del producto (USD):
+  Nodo tren: ESP32-S3 4, SIM7080G 18, BMI088 4, MAX-M10S 18, Raveon 350,
+    antena PCTEL MUF4503 30, gabinete y otros 30. Total 454.
+  Nodo cruce: ESP32-S3 4, SIM7080G 18, óptica LED 200 mm 30, fuente 220Vac/24V
+    15, BMS + 3×18650 12, Raveon 350, antena PCTEL MUF4503S 38, gabinete y otros
+    65. Total 540.
+El Raveon es 40 a 47 % del costo.
+
+Pila de costo (tren / cruce): hardware 454/540, logística y aduana 30 % 136/150,
+puesto en Buenos Aires 590/690, armado y ensayo 60/60, listo para instalar
+650/750, instalación 100/150, instalado y funcionando 750/900.
+Unidad comercial: promedio. Costo 825, precio 1.275, margen 35 %.
+Costo objetivo por método sustractivo: 1.275 × (1 - 0,30) = 892. Se cumple.
+Mercado: TAM 13.843 PAN (USD 16,6 M), SAM 1.122 AMBA (USD 1,35 M), SOM 65
+cruces en tres años (USD 83 k). En 10 años se proyectan 400 cruces (36 % del AMBA).
+
+Modelo de negocio corregido en Hito 2: tres productos. Nodo cruce a USD 1.400,
+nodo tren a USD 1.150 (ambos con aprox 35 % de margen) y abono anual de servicio
+de USD 300 por cruce y USD 120 por nodo tren (costo del servicio 45 % del abono).
+Despliegue por línea: para proteger un cruce hay que equipar todas las
+formaciones que pasan por él (si no, ese cruce ve "sin datos"). Los nodos tren
+son el costo de entrar a una línea y los cruces son la cosecha.
+
+Variables: costo de oportunidad 10 %, inflación en dólares 2,5 %, tasa combinada
+12,75 %, horizonte 10 años, FCD_i = FC_i / ((1+t)^i (1+p)^i).
+Inversión año 0 USD 30.000 (industrialización 12.000, espectro y homologación
+5.000, herramientas y capital de trabajo 13.000). Ensayos y certificación USD
+20.000 en el año 2. Valor residual 8.000 en el año 10.
+Despliegue acumulado de cruces: 10, 35, 65, 105, 150, 200, 250, 300, 350, 400.
+Nodos tren acumulados: 20, 25, 50, 75, 90, 125, 170, 210, 240, 255.
+Indicadores: VAN USD 106.181, TIR 37,6 %, TIRM 27,7 %, TRI 4,7 años, TRI
+descontado 5,5 años, RCBB 1,16x, RCBN 2,32x. VAN positivo en todo el rango de
+sensibilidad analizado (6 % a 22 %, a 22 % da USD 44.400). Desde el año 9 el
+abono factura más que la venta de hardware.
+
+Costo del prototipo: es gasto de proyecto, no entra en el VAN.
+
+
+12. INCONSISTENCIAS Y CORRECCIONES PENDIENTES PARA EL HITO 3
+--------------------------------------------------------------------------------
+Heredadas del Hito 2 (siguen abiertas, no hay versión nueva del deck):
+1. Notas del orador de la lámina 8 todavía dicen "la elección es LoRa 915 MHz con
+   capa criptográfica". La decisión del dispositivo real es UHF Raveon. Para el
+   prototipo sí es LoRa.
+2. R-8 ("banda ISM sin licencia 915 MHz") y E-4 ("enlace en 915 MHz") siguen
+   escritas para LoRa. Reescribir para UHF con licencia y aclarar que el
+   prototipo usa LoRa en 915 MHz como sustituto.
+3. E-15 pide costo por nodo <= USD 100 y el producto cuesta 750/900 instalado.
+   Redefinir la meta de costo por tipo de nodo.
+4. La lámina 9 pone al Raveon en "400 a 480 MHz" y la lámina 21 en "400-480
+   MHz". Es por variante: para 460 MHz corresponde la banda C (450-480 MHz).
+5. Telemetría: el BOM pone SIM7080G también en el nodo tren y el diagrama dice
+   que los módulos de los trenes actualizan el servidor por 4G, pero en otra
+   definición la telemetría iba solo en el nodo cruce. Decidirlo y dejarlo igual
+   en todas las láminas. (El firmware del prototipo sube datos desde los dos.)
+6. BMI088 figura a USD 9 en la lámina 6 y a USD 4 en el BOM.
+7. DFMEA: el control dice CSMA y la acción SOTDMA. Lo definido es TDMA
+   sincronizado por PPS.
+8. Alimentación del cruce: 3 celdas 18650 en serie van de 12,6 V a unos 9 V, y
+   el Raveon pide mínimo 9,5 V. O se corta a 3,2 a 3,3 V por celda (perdiendo
+   capacidad), o se pasa a 4S, o se agrega un buck-boost. Además 3 celdas de
+   unos 3 Ah dan unos 33 Wh, justo contra 32 Wh para 8 h a 4 W sin margen de
+   profundidad de descarga. Alternativa ya propuesta: LiFePO4 12 V 7 Ah (84 Wh)
+   por vida útil a alta temperatura. Decisión abierta.
+9. Falta en todas las láminas: regulación de tensión (24 V a 12 V para la radio y
+   a 3,3 V para la lógica, con picos de 1,2 A en TX), conversor RS-232 a TTL
+   (MAX3232) entre Raveon y ESP32-S3, memoria de registro para E-13, y la
+   alimentación del nodo tren desde la tensión de a bordo (24, 48, 72 o 110 VDC
+   según EN 50155, con DC-DC aislado).
+10. El RPN acumulado no incluye los modos nuevos (sección 10).
+11. Numeración de pie rota (por ejemplo dos láminas "14", dos "29", y saltos).
+12. Antenas PCTEL MUF4503 y MUF4503S en el BOM sin lámina de selección ni
+    verificación de gálibo para montaje en techo.
+13. Cobertura LTE-M/NB-IoT en los cruces objetivo y bandas del SIM7080G contra
+    las de los operadores argentinos: no verificado.
+14. Riesgo de calendario: el Gantt incluye diseño, fabricación y puesta en
+    marcha de placa propia de cuatro capas antes del 11-nov, con la importación
+    y la fabricación como ruta crítica. Con 160 h restantes y las placas recién
+    llegando, la recomendación es: placa propia como ENTREGABLE DE DISEÑO
+    (esquemático, PCB, BOM, cálculos) para el Hito 3, y prototipo funcional
+    sobre T-Beam + placa de interfaz simple. DECISIÓN DEL GRUPO PENDIENTE.
+
+Nuevas, detectadas al cruzar el deck con el firmware:
+15. E-3 dice beacon cada 500 ms y el prototipo transmite cada 100 ms. Las dos
+    cosas son correctas para su radio (sección 5.2), pero hay que escribir E-3
+    con las dos tasas y la razón.
+16. Lámina 21: prototipo con "SIM7080G" en telemetría. El prototipo real usa
+    Wi-Fi a Traccar. Corregir o comprar el módem.
+17. El documento anterior proponía FSK a 9600 bps para el prototipo. Se
+    descartó: el firmware usa LoRa SF7/500 kHz (18 ms de aire). Contarlo como
+    decisión de prototipo.
+18. Argumento de ineficiencia: con CIERRE = OR, PANDA no acorta la barrera baja
+    de un tren lento en un cruce con circuito de vía. Reformular como dice la
+    sección 2.
+19. E-9 está escrito como "sin beacon > 1 s = sin datos" y el firmware hace algo
+    más fino (sección 3). Reescribir la spec para que el firmware la cumpla
+    literalmente.
+20. Invariante de la sección 3: falta en las láminas el segundo contacto
+    "PANDA operativo" y la regla completa del controlador de barrera.
+21. Largo de formación: el firmware supone hasta 250 m (zona de ocupación de
+    280 m). Las cargueras, candidatas a piloto, tienen 1 a 2 km. Y el ETA no
+    contempla que el nodo vaya en la cola (sección 10). Las dos cosas piden que
+    el largo de la formación y la posición del nodo sean parámetros del nodo
+    tren, idealmente dentro del beacon.
+22. Asignación de ranuras por ID de la MAC: puede colisionar con dos trenes.
+    Para la prueba con tres placas, fijar PANDA_NODE_ID a mano en cada tren.
+
+
+13. REQUERIMIENTOS Y ESPECIFICACIONES (heredados del Hito 1, con cambios)
+--------------------------------------------------------------------------------
+Requerimientos clave: R-1 posición GPS, R-2 velocidad, R-3 beacon con ID,
+posición, velocidad, rumbo y timestamp, R-4 recibir beacons, R-5 distinguir
+fijos y móviles, R-6 tiempo de arribo, R-7 alertar al peatón, R-8 banda (A
+REHACER), R-9 alimentación, R-10/R-11 registro exportable, R-12/R-13 latencia y
+anticipación, R-14 compacto, R-15 bajo costo, R-16 no indicar seguro ante falta
+de datos, R-17 autonomía, R-18 a R-21 normas ferroviarias y IP67, R-22 aviso 5 s
+antes del descenso, R-23 campana 95 dB, R-24 independencia del sistema existente,
+R-25 no impedir ni retrasar el cierre, R-26 apertura solo con vía libre del
+sistema existente, R-27 solo señalizar no seguro, R-28 acotar tiempo sin datos,
+R-29 autenticar, cifrar y rechazar repetidos, R-30 autodiagnóstico y estado
+seguro, R-31 telemetría por canal ajeno al lazo de seguridad.
+
+Especificaciones clave: E-1 GNSS >= 3 Hz, E-2 <= 2,5 m CEP, E-3 beacon cada 500 ms
+(A REHACER: 500 ms producto, 100 ms prototipo), E-4 enlace (A REHACER), E-5
+alcance >= 1.500 m con línea de vista, E-6 latencia extremo a extremo <= 300 ms,
+E-7 clasificación de IDs, E-8a predicción de arribo, E-8b criterio configurable
+(hoy ETA mínimo <= 25 s), E-9 sin datos (A REHACER, sección 3), E-10 alerta en
+<= 500 ms, E-11 12 V regulado a 5 V, E-12 respaldo >= 4 h (el DFMEA lo lleva a
+8 h), E-13 registro >= 2 h exportable, E-14 peso <= 500 g e instalación <= 1 h,
+E-15 costo (INCONSISTENTE), E-16 IP67, E-17 IEC 61373 cat. 1 clase B, E-18 -20 a
++70 °C, E-19 preaviso 5 s, E-20 95 dB a 1 m, E-21 contacto seco con aislación
+2,5 kV, E-22 AES-128 + CMAC + contador, ventana 2 s, E-23 watchdog independiente,
+E-24 sin datos < 2 % en 24 h.
+
+Plan de validación en ocho etapas (Hito 1): 1 banco unitario, 2 banco
+integración, 3 banco fallas inducidas, 4 campo alcance, 5 instalación nodo tren,
+6 instalación nodo cruce, 7 operación supervisada, 8 habilitación de la barrera.
+Ningún paso habilita el siguiente sin cumplir su criterio. La conexión a una
+barrera real sería la última y solo después de 200 pasadas sin un falso cruce
+seguro. Para la tesis, las etapas 1 a 4 son el alcance, más el viaje como
+pasajero (no es instalación). Las etapas 5 a 8 sobre infraestructura real
+quedan fuera de alcance salvo autorización.
+
+
+14. PLAN DE TRABAJO DESDE EL 1-OCT
+--------------------------------------------------------------------------------
+Semana 1 al 7-oct · ENTREGA DEL HITO 3 (prioridad absoluta)
+- Diagrama de bloques de hardware del producto y del prototipo (sección 6).
+- Cálculos: presupuesto de enlace (5.2 y 9.2), consumo y batería, regulación
+  con picos de 1,2 A, TDMA y capacidad (5.2), umbral de 25 s y perfil de
+  tracción (PANDA_contexto_firmware.txt sección 6).
+- Esquemático de la placa propia o de la placa de interfaz (decidir, punto 14
+  de la sección 12): MAX3232, DC-DC, watchdog, relés con aislación, opto.
+- Software: diagramas de flujo de los dos nodos (tareas, máquina de estados del
+  cruce, validación del beacon, TDMA) y complejidad. El firmware ya existe, así
+  que se dibuja lo que hay.
+- Plan de pruebas: la matriz de la sección 9 con criterio de aprobación por
+  prueba.
+- DFMEA actualizado con los modos nuevos (sección 10).
+- Correcciones de la sección 12.
+
+Semana del 5-oct · llegada de las placas: puesta en marcha
+- Seguir PANDA_contexto_firmware.txt sección 11, pruebas P1 a P4. No esperar
+  que todo ande de primera: nunca corrió en placa. Los puntos con más chances
+  de pedir ajustes son la PMU, el GNSS a 10 Hz con todas las constelaciones,
+  el PPS, la radio (TCXO), la microSD compartiendo SPI con la IMU y la subida
+  por USB. El arranque imprime cada paso, así que una falla dice dónde está.
+- Traer a Claude la salida de consola de los primeros 30 s de cada placa.
+
+Del 8 al 21-oct · banco y presentación del Hito 3
+- Fallas inducidas (P3), simulador (P4), primeras mediciones de E-6 y E-10.
+- Comprar o armar la interfaz física y la maqueta.
+- Meter en la presentación del 21-oct los primeros números reales (RSSI, edad
+  del dato, PER, fallas inducidas). Suma mucho.
+
+Del 21-oct al 11-nov · campo e integración (entrega Hito 4 el 11-nov)
+- P5 alcance en la calle (E-5), con barrido de ruido en el lugar.
+- Viaje 1 con el registrador y después P6 viaje en tren con tren y cruce.
+- Fase 4 del firmware (IMU) con los datos del viaje.
+- Maqueta de barrera con su controlador, integración con el nodo cruce.
+- Ensayo de 24 h para E-24. Medición de sonido (E-20). Descarga de batería.
+- Si se decide, corrección del ETA por largo de formación (sección 10).
+
+Del 11-nov al 2-dic · validación y cierre
+- Estudios de confiabilidad: DFMEA con O y D recalculados con datos medidos
+  (pérdida de paquetes real, tiempo sin datos real).
+- Informe final y presentación.
+
+
+15. FRASES DE DEFENSA QUE FUNCIONARON
+--------------------------------------------------------------------------------
+- "PANDA agrega una capa, no reemplaza nada. Cualquier falla nuestra degrada el
+  cruce a su comportamiento actual, nunca por debajo."
+- "Cierre en OR, apertura en AND."
+- "El estado seguro del semáforo peatonal es no seguro. El sistema nunca afirma
+  que se puede cruzar."
+- "La IMU no es para navegar, es para verificar que el GNSS no está mintiendo."
+- "El SETOP no exige avisarle al peatón. Ese es el hueco que llenamos."
+- "El prototipo demuestra que la lógica es correcta, no que el equipo está
+  homologado."
+- "Licencia da exclusividad, no autenticidad. La autenticidad la da el CMAC."
+- "Los nodos tren son el costo de entrar a una línea, los cruces son la cosecha."
+- "Por debajo de setenta unidades conviene comprar la radio, arriba conviene
+  diseñarla."
+Nuevas para el Hito 3:
+- "PANDA no le da órdenes a la barrera. Le da dos contactos, y el controlador
+  existente decide con la regla de siempre más la nuestra."
+- "El prototipo transmite a 10 Hz porque LoRa lo permite. El producto va a
+  2 Hz porque es lo que entra en 9600 bps con doce trenes por canal."
+
+
+16. ARCHIVOS DEL PROYECTO
+--------------------------------------------------------------------------------
+En el repositorio (D:\ITBA\PANDA-Tesis-Ingenieria-Electronica):
+- PANDA_contexto_tesis.txt: este archivo.
+- PANDA_contexto_firmware.txt: contexto del firmware y pruebas paso a paso.
+- firmware/panda-node: firmware PlatformIO, README y herramientas de PC.
+
+En D:\Downloads:
+- Hito 2 - PANDA.pptx (10-sep): deck presentado el 9-sep, 33 láminas. Fuente
+  de verdad del diseño presentado.
+- PANDA_flujo_de_caja.xlsx: modelo económico editable (sección 11).
+- PANDA contexto sept.txt: versión anterior de este archivo (16-sep). Historia.
+- PANDA-contexto-tesis.md, Hito 1 - PANDA.pptx y los H0_H1 V2V: documentos
+  anteriores con decisiones que cambiaron (STM32F407, NEO-M9N/NEO-M8N, T-Beam
+  V1.2, LoRa como enlace real). Usar solo como historia.
+- setop_7-81.pdf: SETOP 7/81 con suplemento.
+- estudio_para_el_15deg_congreso_del_ilcad_2023._v4.pdf: estudio de la JST.
+- tesis teorica.pdf: presentación de la materia con contenidos por hito.
+- tesis cronograma.pdf y Cronograma 25.32 2026Q1 - 2026Q2.xlsx: fechas.
+
+
+17. PREGUNTAS ABIERTAS PARA EL GRUPO
+--------------------------------------------------------------------------------
+1. ¿Cuántas T-Beam llegan y qué más se compró (antenas, relés, maqueta)?
+2. ¿La placa propia se fabrica para la tesis o queda como entregable de diseño?
+3. ¿Telemetría solo en el cruce o también en el tren (producto)?
+4. ¿Se compra el SIM7080G o se declara el Wi-Fi como sustituto en el prototipo?
+5. ¿Qué maqueta de barrera y qué micro para su controlador?
+6. ¿Se corrige ya el ETA por largo de formación y posición del nodo?
+7. ¿Hay feedback escrito del Hito 2?
+8. Química y capacidad de la batería del producto (sección 12 punto 8).
+================================================================================
