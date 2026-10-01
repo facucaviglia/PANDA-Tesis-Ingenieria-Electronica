@@ -1071,8 +1071,14 @@ En el repositorio (github.com/facucaviglia/PANDA-Tesis-Ingenieria-Electronica,
 local en D:\ITBA\PANDA-Tesis-Ingenieria-Electronica):
 - PANDA_contexto_tesis.txt: este archivo.
 - PANDA_contexto_firmware.txt: contexto del firmware y pruebas paso a paso.
-- docs/Hito 2 - PANDA.pptx: deck presentado el 9-sep, 33 láminas. Fuente de
-  verdad del diseño presentado.
+- docs/Hito 2 - PANDA.pptx: deck presentado el 9-sep, 33 láminas.
+- docs/HITO 3 - PANDA.pptx: borrador del Hito 3 (1-oct), 28 láminas con el
+  mismo estilo del Hito 2: decisiones, ciclo de ADIF, PANDA principal, ETA de
+  peor caso, ganancia, atribución, plausibilidad, diagramas de bloques del
+  prototipo y del producto, real contra prototipo, enlace, beacon y TDMA,
+  consumo, conexionado, maqueta, firmware (arquitectura, flujos, estados,
+  complejidad, simulador), planes de prueba, DFMEA, legal y Gantt. Tiene notas
+  del orador. Todos los números son estimados de diseño, declarados así.
 - firmware/panda-node: firmware PlatformIO, README y herramientas de PC.
 
 En D:\Downloads:
