@@ -19,12 +19,15 @@ Un solo código con varios roles, elegidos al compilar.
 
 > **Nunca encender un nodo `tren` sin antena.** Transmite desde que arranca y el SX1262 se puede dañar.
 
-## 2. Configurar el hotspot y Traccar
+## 2. Configurar el hotspot y Traccar (TODO, hoy desactivado)
 
-1. Abrí `include/secrets.h` (no se sube a git) y completá `WIFI_SSID` y `WIFI_PASSWORD` con los datos del hotspot. En iPhone el nombre es el del teléfono (Ajustes > General > Información > Nombre).
-2. En el iPhone: Ajustes > Compartir Internet > activar **Permitir a otros conectarse** y **Maximizar compatibilidad**. Sin esto emite en 5 GHz y el ESP32 no lo ve.
-3. El iPhone apaga el hotspot si nadie se conecta durante un rato. Dejá abierta la pantalla de Compartir Internet hasta que la placa se conecte. Si se corta, la placa reintenta sola cada 10 s.
-4. En <https://demo.traccar.org> creá una cuenta y da de alta los dispositivos que vayas a usar, con estos **identificadores**:
+> **Por ahora la telemetría está apagada** (`cfg::telemetry::kEnabled = false` en `include/config.h`). Se activa recién después de probar el enlace entre las dos placas. Mientras tanto toda la información se ve en la pantalla OLED de cada placa, en la consola serie y en la microSD. Esta sección queda para ese momento.
+
+1. Pasá `cfg::telemetry::kEnabled` a `true`.
+2. Abrí `include/secrets.h` (no se sube a git) y completá `WIFI_SSID` y `WIFI_PASSWORD` con los datos del hotspot. En iPhone el nombre es el del teléfono (Ajustes > General > Información > Nombre).
+3. En el iPhone: Ajustes > Compartir Internet > activar **Permitir a otros conectarse** y **Maximizar compatibilidad**. Sin esto emite en 5 GHz y el ESP32 no lo ve.
+4. El iPhone apaga el hotspot si nadie se conecta durante un rato. Dejá abierta la pantalla de Compartir Internet hasta que la placa se conecte. Si se corta, la placa reintenta sola cada 10 s.
+5. En <https://demo.traccar.org> creá una cuenta y da de alta los dispositivos que vayas a usar, con estos **identificadores**:
 
 | Identificador | Qué muestra | Lo sube |
 |---|---|---|

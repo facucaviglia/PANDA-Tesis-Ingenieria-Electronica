@@ -1,7 +1,7 @@
 ================================================================================
 PANDA · FIRMWARE DE LOS NODOS (T-BEAM SUPREME)
 DOCUMENTO DE CONTEXTO PARA RETOMAR EL TRABAJO EN UN CHAT NUEVO
-Estado al 24 de septiembre de 2026
+Estado al 1 de octubre de 2026
 ================================================================================
 
 0. INSTRUCCIONES PARA LA IA QUE LEA ESTE ARCHIVO
@@ -32,12 +32,19 @@ Qué NO reabrir (decisiones tomadas con Facu):
 Qué NO asumir:
 - NADA fue probado en una placa todavía. Todo compila y la lógica se verificó
   con modelos en Python, pero el primer arranque real puede pedir ajustes.
-- Las T-Beam llegan la semana del 5-oct-2026 (confirmar cuántas).
+- Llegan DOS T-Beam Supreme con MAX-M10S el 10-oct-2026: una TREN y una
+  CRUCE. No hay tercera placa, así que dos trenes solo se prueban con el
+  simulador. No hay nada más comprado (buzzer y LEDs se consiguen).
+- Telemetría (Traccar por Wi-Fi) APAGADA a propósito con
+  cfg::telemetry::kEnabled = false. TODO hasta probar el enlace. Todo se ve
+  en la OLED, la consola y la microSD.
+- Watchdog externo TPL5010: TODO comentado en config.h y crossing_io.cpp.
 - Recompilado el 1-oct-2026: los tres roles compilan sin errores.
-- Pendientes de diseño detectados el 1-oct (ver PANDA_contexto_tesis.txt
-  sección 10): el ETA usa la posición de la antena sin contemplar que el nodo
-  vaya en la cola de la formación, y la ranura sale del ID de la MAC (fijar
-  PANDA_NODE_ID a mano si hay dos trenes).
+- Requisito de instalación (decidido 1-oct): el nodo tren va en la cabina
+  DELANTERA. El ETA usa la posición de la antena, así que con el nodo en el
+  frente es la del frente del tren. Está documentado en config.h.
+- La ranura sale del ID de la MAC. Si algún día hay dos trenes reales, fijar
+  PANDA_NODE_ID a mano en cada uno.
 
 
 1. QUÉ ES Y DÓNDE ESTÁ
@@ -124,7 +131,7 @@ Común a todos:
 - microSD: carpeta PANDA_NNNN por encendido, CSV con base de tiempo t_us común.
   Se puede insertar con la placa encendida (reintenta cada 5 s).
 - Telemetría a Traccar por el hotspot del iPhone (OsmAnd HTTP, 1 Hz), aislada
-  en el core 0 (R-31).
+  en el core 0 (R-31). HOY APAGADA (cfg::telemetry::kEnabled = false, TODO).
 - OLED a 5 Hz, consola serie con resumen cada 1 s, botón BOOT:
   corto = MARCA con tiempo exacto, largo (1,5 s) = siguiente perfil de radio.
 - Consola por líneas (tarea propia): h ayuda, i info, m marca, p perfil,
@@ -304,12 +311,10 @@ No verificado (primer contacto con la placa):
 [ ] Dos microSD FAT32 (4 a 32 GB) y dos 18650 sin protección de punta plana
     (o power bank por USB-C).
 [ ] Etiquetar las placas: "TREN" y "CRUCE".
-[ ] En include/secrets.h: WIFI_SSID (nombre del iPhone) y WIFI_PASSWORD.
-[ ] iPhone: Ajustes > Compartir Internet > Permitir a otros conectarse y
-    Maximizar compatibilidad.
-[ ] demo.traccar.org: crear cuenta y dar de alta los dispositivos
-    panda-itba-tren, panda-itba-tren-lora y panda-itba-cruce. App Traccar
-    Manager en el celular con servidor https://demo.traccar.org.
+[ ] Traccar y Wi-Fi: NO hace falta por ahora (TODO, telemetría apagada en
+    config.h). Se activa después de probar el enlace. Ver README sección 2.
+[ ] Si se consigue buzzer: activo (suena con continua) o pasivo. Ajustar
+    cfg::crossing::kBuzzerIsActive en config.h según el que sea.
 [ ] Sincronizar la hora de la PC (Configuración > Hora e idioma).
 
 11.2 Cargar el firmware
@@ -344,8 +349,8 @@ No verificado (primer contacto con la placa):
 4. Con las dos placas juntas el cruce va a mostrar NO SEGURO "tren en zona":
    ES CORRECTO, el tren está a 0 m del cruce. La consola muestra "edad" (E-6
    medido), PER y la distancia.
-5. Verificar en Traccar que aparezcan panda-itba-tren, panda-itba-tren-lora
-   y panda-itba-cruce.
+5. (TODO, cuando se active Traccar) verificar que aparezcan panda-itba-tren,
+   panda-itba-tren-lora y panda-itba-cruce.
 
 11.5 Prueba 3: fallas inducidas (con GPS, placas juntas)
 --------------------------------------------------------
@@ -368,14 +373,16 @@ e) Revisar en la consola los contadores: crc, mac, rep, vie.
 
 11.7 Prueba 5: alcance en la calle (auto o caminando)
 -----------------------------------------------------
-1. CRUCE fijo en un punto alto (trípode, placa arriba y no abajo con cable),
-   con su hotspot. Dejarlo 1 min quieto y guardar posición con "c".
-2. TREN en el auto (o caminando) con otro celular de hotspot. Potencia CAMPO
-   con "w" en el tren (22 dBm, ver ENACOM en sección 10).
+1. CRUCE fijo en un punto alto (trípode, placa arriba y no abajo con cable).
+   Dejarlo 1 min quieto y guardar posición con "c".
+2. TREN en el auto (o caminando). Potencia CAMPO con "w" en el tren (22 dBm,
+   ver ENACOM en sección 10).
 3. Alejarse por una calle recta hasta perder el enlace y volver.
-4. Mirar en Traccar los dos puntos: panda-itba-tren (GNSS propio) y
-   panda-itba-tren-lora (lo que llegó al cruce). Donde se congela el segundo,
-   ahí se cortó el enlace.
+4. En vivo: alguien al lado del CRUCE mira la pantalla (distancia y RSSI) y
+   anota dónde pasa a SIN DATOS. Después, con las microSD: rx.csv del cruce
+   contra gnss.csv del tren por tiempo GPS da la pérdida contra la distancia.
+   (Con Traccar activo, el punto panda-itba-tren-lora se congela donde se
+   corta el enlace. Queda como TODO.)
 5. Repetir con los perfiles 0, 1, 2 y 3 (cambiar en los DOS).
 6. Usar el botón en el cruce para marcar cuando pasa el auto: después se
    compara el ETA predicho con el paso real.

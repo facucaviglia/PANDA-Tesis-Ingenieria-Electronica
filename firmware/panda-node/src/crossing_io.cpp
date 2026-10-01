@@ -24,6 +24,10 @@ static void writePin(int pin, bool high) {
 }
 
 static void buzzer(bool on) {
+  if (cfg::crossing::kBuzzerIsActive) {
+    writePin(pins::kOutBuzzer, on);
+    return;
+  }
   // ledcWriteTone con frecuencia 0 apaga el PWM.
   ledcWriteTone(kBuzzerChannel, on ? cfg::crossing::kBeepHz : 0);
 }
@@ -63,8 +67,12 @@ void begin() {
   // lámpara: el que mira ve que el LED funciona.
   writePin(pins::kOutPedestrian, true);
 
-  ledcSetup(kBuzzerChannel, cfg::crossing::kBeepHz, kBuzzerResolution);
-  ledcAttachPin(pins::kOutBuzzer, kBuzzerChannel);
+  if (cfg::crossing::kBuzzerIsActive) {
+    pinMode(pins::kOutBuzzer, OUTPUT);
+  } else {
+    ledcSetup(kBuzzerChannel, cfg::crossing::kBeepHz, kBuzzerResolution);
+    ledcAttachPin(pins::kOutBuzzer, kBuzzerChannel);
+  }
   buzzer(false);
 
   pinMode(pins::kInTrackCircuit, INPUT_PULLUP);
@@ -93,6 +101,7 @@ void apply(const Outputs& out) {
 
   s_lastApplyUs.store(esp_timer_get_time());
   s_tripped.store(false);
+  // TODO(tpl5010): pulso en el pin DONE del watchdog externo (ver config.h).
 }
 
 bool readTrackOccupied() {

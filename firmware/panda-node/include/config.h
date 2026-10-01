@@ -242,8 +242,14 @@ constexpr float kMaxAccelMps2 = 1.0f;
 constexpr float kAccelKneeMps = 11.1f;
 constexpr float kLineMaxSpeedMps = 33.3f;
 
-// Radio de ocupación: la antena GNSS está en un solo coche y el resto de la
-// formación puede estar sobre el cruce. Con un tren de hasta kMaxTrainLengthM,
+// Requisito de instalación: el nodo tren va en la CABINA DELANTERA, en el
+// sentido de marcha. Así la posición del beacon es la del frente del tren (a
+// pocos metros, cubiertos por el margen del umbral) y el ETA no se atrasa. Si
+// el nodo fuera en la cola, el frente llegaría hasta kMaxTrainLengthM antes
+// (7,5 s a 120 km/h) y el ETA quedaría del lado inseguro.
+//
+// Radio de ocupación: con el nodo en el frente, después del paso el resto de
+// la formación sigue sobre el cruce. Con un tren de hasta kMaxTrainLengthM,
 // cualquier tren más cerca que eso más un margen se considera sobre el cruce.
 // Para cargas largas hay que subirlo (la protección de fondo es el circuito de vía).
 constexpr float kMaxTrainLengthM = 250.0f;
@@ -296,6 +302,22 @@ constexpr uint32_t kHeartbeatTimeoutMs = 300;
 constexpr uint32_t kBeepHz = 2500;
 constexpr uint32_t kBeepOnMs = 200;
 constexpr uint32_t kBeepPeriodMs = 1000;
+
+// Tipo de buzzer en GPIO 48. Pasivo (sin oscilador interno): se maneja con PWM
+// a kBeepHz. Activo (trae su oscilador, suena con tensión continua, el más
+// común en las casas de electrónica): se maneja con nivel alto y bajo. Una
+// sirena de 12 V se maneja igual que uno activo, a través de un transistor.
+constexpr bool kBuzzerIsActive = false;
+
+// TODO(tpl5010): watchdog externo TPL5010 (acción del DFMEA para el bloqueo del
+// micro). Queda para después de probar las dos placas. Plan:
+//   - Pin DONE del TPL5010 en un GPIO libre (45 o 46, ojo que son pines de
+//     arranque, o el 3 si la medición de corriente del LED va por I2C).
+//   - Salida RESET del TPL5010 al pin EN del ESP32.
+//   - Pulso en DONE desde crossio::apply(), o sea solo si la tarea de decisión
+//     está viva y refrescando las salidas.
+// constexpr bool kExternalWdtEnabled = false;
+// constexpr int kExternalWdtDonePin = 46;
 }  // namespace crossing
 
 // -----------------------------------------------------------------------------
@@ -339,6 +361,13 @@ constexpr uint32_t kRemountPeriodMs = 5000;
 // Telemetría (capa de inteligencia, fuera del lazo de seguridad)
 // -----------------------------------------------------------------------------
 namespace telemetry {
+// TODO(traccar): telemetría APAGADA hasta probar el enlace entre las dos
+// placas. Para activarla: completar WIFI_SSID y WIFI_PASSWORD en secrets.h,
+// dar de alta los dispositivos en Traccar y pasar esto a true. Apagada, el
+// nodo ni enciende el Wi-Fi. Todo lo demás (radio, decisión, pantalla,
+// consola, microSD) funciona igual.
+constexpr bool kEnabled = false;
+
 // Una posición por segundo alcanza para ver el tren en el mapa. El dato
 // completo a 10 Hz queda en la microSD.
 constexpr uint32_t kPeriodMs = 1000;

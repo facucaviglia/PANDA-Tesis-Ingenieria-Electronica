@@ -167,8 +167,12 @@ bool send(HTTPClient& http, WiFiClient& client, const Report& r) {
 }  // namespace
 
 void Telemetry::startTask() {
-  const bool enabled = strlen(WIFI_SSID) > 0;
+  const bool enabled = cfg::telemetry::kEnabled && strlen(WIFI_SSID) > 0;
   g_stats.wifiEnabled.store(enabled);
+  if (!cfg::telemetry::kEnabled) {
+    Serial.println("[TEL] Telemetría desactivada en config.h (TODO: activar después de probar el enlace)");
+    return;
+  }
   if (!enabled) {
     Serial.println("[TEL] WIFI_SSID vacío en secrets.h, telemetría desactivada");
     return;
