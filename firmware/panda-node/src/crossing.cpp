@@ -518,6 +518,10 @@ static void decisionTask(void*) {
   bool trackRawPrev = false;
   uint32_t trackStable = 0;
 
+  // Monitoreo del punto 22 del Anexo XII (0 = la condición no se cumple).
+  int64_t barrierMismatchSinceUs = 0;
+  int64_t trackSinceUs = 0;
+
   TickType_t lastWake = xTaskGetTickCount();
   for (;;) {
     vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(cfg::crossing::kPeriodMs));
@@ -697,6 +701,11 @@ static void decisionTask(void*) {
     }
 
     // --- 5. Evaluación de cada tren -----------------------------------------
+    // Si PANDA ya pide el cierre, un tren que se acerca lo sigue sosteniendo
+    // hasta kReleaseEtaS: es el sector de aproximación del Anexo XII (la
+    // barrera no sube con otro tren en aproximación, y entre que llega arriba
+    // y el próximo ciclo pasan al menos 5 s).
+    const bool closedByPanda = st.state == CrossState::NoSeguro;
     for (auto& t : s_trains) {
       if (!t.used) continue;
       const int64_t sinceValid = t.haveValid ? now - t.lastValidUs : INT64_MAX;
@@ -715,7 +724,10 @@ static void decisionTask(void*) {
         if (t.closingMps > cfg::crossing::kMinClosingMps) t.tailCleared = false;
         const bool inZone = t.distM <= cfg::crossing::kOccupiedRadiusM && !t.tailCleared;
         const bool implausible = now < t.implausibleUntilUs;
-        const bool danger = implausible || (relevant && (inZone || t.etaMinS <= cfg::crossing::kAlertEtaS));
+        const bool approaching = t.closingMps > cfg::crossing::kMinClosingMps;
+        const float etaThreshold =
+            (closedByPanda && approaching) ? cfg::crossing::kReleaseEtaS : cfg::crossing::kAlertEtaS;
+        const bool danger = implausible || (relevant && (inZone || t.etaMinS <= etaThreshold));
 
         if (inZone) {
           t.phase = TrainPhase::EnZona;
@@ -903,6 +915,42 @@ static void decisionTask(void*) {
       st.barrierPhase = 0;
       st.barrierDown = st.closeRequest;
     }
+
+    // Monitoreo (Anexo XII, punto 22). La g) original, "brazo levantado con
+    // circuito ocupado", con PANDA principal salta en cada tren lento
+    // atribuido. Se redefine como "el brazo no sigue la regla del
+    // controlador": hay pedido de cierre y el brazo sigue arriba o subiendo.
+    // Necesita la posición del brazo: solo se evalúa con la maqueta.
+    if (cfg::crossing::kBarrierOnBoard) {
+      const crossio::BarrierPhase bp = static_cast<crossio::BarrierPhase>(st.barrierPhase);
+      const bool armUp = bp == crossio::BarrierPhase::Arriba || bp == crossio::BarrierPhase::Subiendo;
+      if (!(st.closeRequest && armUp)) {
+        barrierMismatchSinceUs = 0;
+      } else if (barrierMismatchSinceUs == 0) {
+        barrierMismatchSinceUs = now;
+      }
+      const bool alarm = barrierMismatchSinceUs != 0 &&
+                         now - barrierMismatchSinceUs > static_cast<int64_t>(cfg::crossing::kAlarmBarrierMs) * 1000;
+      if (alarm != st.alarmBarrier) {
+        logNote(NoteCode::AlarmBarrier, alarm ? 1 : 0);
+        Serial.printf("[CRUCE] ALARMA 22 g): %s\n",
+                      alarm ? "el brazo no baja con pedido de cierre" : "el brazo volvió a seguir el pedido");
+      }
+      st.alarmBarrier = alarm;
+    }
+    // f) Circuito ocupado por más de 10 minutos, igual que hoy.
+    if (!st.trackOccupied) {
+      trackSinceUs = 0;
+    } else if (trackSinceUs == 0) {
+      trackSinceUs = now;
+    }
+    const bool trackLong = trackSinceUs != 0 &&
+                           now - trackSinceUs > static_cast<int64_t>(cfg::crossing::kAlarmTrackLongMs) * 1000;
+    if (trackLong != st.alarmTrackLong) {
+      logNote(NoteCode::AlarmTrackLong, trackLong ? 1 : 0);
+      Serial.printf("[CRUCE] ALARMA 22 f): circuito ocupado %s\n", trackLong ? "más de 10 minutos" : "liberado");
+    }
+    st.alarmTrackLong = trackLong;
 
     crossio::apply({st.pandaLibre, st.pandaOk, st.pedestrian, state == CrossState::NoSeguro, st.otherTrain,
                     st.muted});

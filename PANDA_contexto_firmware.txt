@@ -1,7 +1,9 @@
 ================================================================================
 PANDA · FIRMWARE DE LOS NODOS (T-BEAM SUPREME)
 DOCUMENTO DE CONTEXTO PARA RETOMAR EL TRABAJO EN UN CHAT NUEVO
-Estado al 1 de octubre de 2026 (firmware 0.4.0, PANDA principal)
+Estado al 10 de octubre de 2026 (firmware 0.4.1, PANDA principal; la 0.4.1 suma
+la revisión legal contra el Anexo XII y el SETOP, ver sección 18.8 del
+contexto de la tesis)
 ================================================================================
 
 0. INSTRUCCIONES PARA LA IA QUE LEA ESTE ARCHIVO
@@ -128,7 +130,7 @@ Salidas y entrada del nodo cruce (header derecho, libres: 2, 3, 21, 38, 39,
   GPIO 39  señal peatonal NO SEGURO (LED rojo)
   GPIO 45  OTRO TREN (LED con resistencia a GND, pin de arranque: nada de
            pull-up)
-  GPIO 48  sonido (buzzer pasivo con PWM 2,5 kHz o activo con kBuzzerIsActive)
+  GPIO 48  sonido (buzzer pasivo con PWM 1568 Hz, sol5, o activo con kBuzzerIsActive)
   GPIO 2   entrada circuito de vía: interruptor a GND (cerrado = LIBRE), o
            optoacoplador. Abierto = OCUPADA.
   GPIO 46  reservado para el DONE del TPL5010 (TODO)
@@ -259,17 +261,28 @@ y el tren queda en "dato inconsistente" (NO SEGURO) más 2 s. Ancla de más de
 30 s se reemplaza sin comparar.
 
 OTRO TREN: dos trenes alertando, o uno más un circuito sin explicar. Prende
-el LED del GPIO 45 y duplica el ritmo del sonido.
+el LED del GPIO 45 intermitente cada 0,5 s (Anexo XII 4.2) y duplica el
+ritmo del sonido.
+
+Liberación (sector de aproximación, Anexo XII 19 y 20): con el cierre ya
+pedido, un tren que se acerca lo sostiene hasta ETA de peor caso > 40 s
+(kReleaseEtaS = 32 + 3 de subida + 5 de espera). Un tren detenido no.
 
 Salidas por estado:
   APAGADO    señal apagada, PANDA libre ON, PANDA operativo ON, sin sonido
-  NO SEGURO  señal ON, PANDA libre OFF (pedido de cierre), operativo ON, sonido
-  FALLA      señal ON, libre OFF, operativo OFF (la barrera sigue al circuito)
+  NO SEGURO  señal intermitente 0,5 s durante t_p (17,1 s) y después fija,
+             PANDA libre OFF (pedido de cierre), operativo ON, sonido
+  FALLA      señal ON fija, libre OFF, operativo OFF (la barrera sigue al
+             circuito). Desvío declarado del Anexo XII 4.2
 Controlador de barrera (maqueta, módulo aparte en crossing_io.cpp, timer de
 20 Hz en el core 0): con PANDA operativo baja si PANDA pide cierre. Sin PANDA
 operativo baja si el circuito está ocupado. Secuencia: FONO 7 s (luces
-alternadas y campana), BAJANDO 6 s, ABAJO, SUBIENDO 3 s con señales apagadas,
-y si el pedido vuelve mientras sube baja de inmediato.
+alternadas y campana), BAJANDO 6 s, ABAJO (campana a nivel reducido,
+kBellLowDuty, Anexo XII 5.5), SUBIENDO 3 s con las señales TODAVÍA
+ENCENDIDAS (SETOP 8.6.6, que manda sobre el Anexo XII 20), y si el pedido
+vuelve mientras sube baja de inmediato con las luces sin corte.
+Alarmas (Anexo XII 22): g) redefinida "pedido de cierre con el brazo arriba
+o subiendo más de 1 s" y f) circuito ocupado más de 10 min. Eventos 22 y 23.
 Métrica de validación: evento "vía ocupada con PANDA en vía libre" (tren sin
 nodo detectado solo por el circuito).
 
@@ -295,7 +308,8 @@ PANDA_NNNN/  (t_us = µs desde el arranque de esa placa, común a todos)
                 10 cambio de estado, 11 tren nuevo, 12 tren olvidado, 13 PASO,
                 14 circuito de vía, 15 vía sin PANDA, 16 liberación, 17
                 referencia guardada, 18 vigilante, 19 circuito explicado, 20
-                circuito sin explicar, 21 dato inconsistente)
+                circuito sin explicar, 21 dato inconsistente, 22 alarma
+                22 g, 23 alarma 22 f; valor 1 empieza, 0 termina)
   tx.csv        tren: un renglón por beacon
   rx.csv        cruce: un renglón por paquete (origen RADIO o USB), con la
                 aceleración recibida
@@ -311,7 +325,8 @@ verify_crypto.py   Python puro. AES, CMAC y CTR contra vectores oficiales y
 sim_trenes.py      Manda beacons reales por USB al nodo cruce y hace de
                    circuito de vía (1033 m del lado s < 0 hasta 5 m pasado el
                    cruce, lo ocupa cualquier tren de ese lado). Escenarios:
-                   rapido, lento, detenido, perdida, silencio, dos, repeticion,
+                   rapido, lento, detenido, perdida, silencio, dos,
+                   aproximacion (sector de aproximación), repeticion,
                    cmac, sin_posicion, via (tren sin nodo), salto (GNSS con
                    300 m de error). "--seco" corre sin placa, muestra la
                    secuencia esperada y el tiempo de pedido de cierre de PANDA
@@ -319,15 +334,25 @@ sim_trenes.py      Manda beacons reales por USB al nodo cruce y hace de
 modelo_cruce.py    Modelo de referencia de la lógica del cruce (mismas reglas
                    que crossing.cpp). close_distance(v) da la distancia de
                    cierre.
+test_pc/correr.sh  Compila el cruce para los tres roles con cabeceras mínimas
+                   y prueba la maqueta con reloj simulado (luces en la subida,
+                   5 s de luces antes de cada bajada, campana reducida,
+                   intermitencias). Sin placa ni PlatformIO.
 Resultados esperados (modelo, pedido de cierre PANDA contra circuito actual):
   rapido 100 km/h      44,3 s contra 44,8 s
   lento 40 km/h        80,2 s contra 111,9 s   (+31,7 s)
-  detenido a 500 m     72,0 s contra 110,0 s   (+37,9 s, APAGADO parado)
+  detenido a 500 m     74,8 s contra 110,0 s   (+35,1 s, APAGADO parado; los
+                       2,8 s de diferencia con antes son la histéresis
+                       mientras frena)
   silencio             60,2 s contra 74,7 s    (SIN DATOS hasta que pasa la cola)
   via (sin nodo)       igual que hoy, 55,9 s
   salto                dato inconsistente sin ningún hueco APAGADO
   dos                  -2,3 s: la otra vía no tiene circuito cableado a la
                        placa y se libera por radio unos 4 s más tarde
+  aproximacion         la barrera no sube entre los dos trenes (sin la
+                       histéresis subiría y volvería a bajar a los 4 s).
+                       -3,7 s por lo mismo que "dos". El "sistema actual" del
+                       modelo ahora respeta el sector de aproximación
   perdida              SIN DATOS 1 s después del corte
   repeticion y cmac    sin efecto en el estado
 

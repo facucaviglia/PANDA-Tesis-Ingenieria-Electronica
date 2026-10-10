@@ -187,8 +187,8 @@ hasta 90 km/h (9 s a 70 km/h, 5 s a 80 km/h), así que el firmware NO pone un
 tope de velocidad a la autoridad de PANDA. El riesgo de un error de posición
 lo controlan la atribución del circuito y la plausibilidad.
 Simulador (tools/sim_trenes.py --seco, tiempo de pedido de cierre por pasada):
-  40 km/h 80 s contra 112 s (+32 s), detenido a 500 m 72 s contra 110 s
-  (+38 s), 100 km/h 44,3 s contra 44,8 s, tren sin nodo igual que hoy.
+  40 km/h 80 s contra 112 s (+32 s), detenido a 500 m 75 s contra 110 s
+  (+35 s), 100 km/h 44,3 s contra 44,8 s, tren sin nodo igual que hoy.
 
 Además, contra la ineficiencia PANDA aporta, en cualquier variante:
 - Información real del tren (capa de inteligencia): posición, velocidad, ETA
@@ -696,14 +696,17 @@ SETOP 8.6.12 y Anexo XII: ciclo | Cierre cuando el peor ETA con el    | ETA pred
 8.6.5 luces alternadas 0,5 s    | Maqueta (GPIO 38 y 3)               | Video o analizador lógico | IMPL, falta
                                 |                                     |                           | la maqueta
 8.6.6 / R-22 / E-19 preaviso    | Maqueta: FONO de 7 s (Anexo XII)    | Analizador lógico entre   | IMPL, falta
-                                | antes de mover el servo             | luz y servo               | la maqueta
-Anexo XII: OTRO TREN            | LED (GPIO 45) y sonido al doble     | Simulador "dos"           | IMPL
+                                | antes de mover el servo y luces     | luz y servo. Prueba en PC | la maqueta.
+                                | hasta la vertical (también subiendo)| (test_pc): HECHO          | PC: HECHO
+Anexo XII: OTRO TREN            | LED (GPIO 45) intermitente 0,5 s y  | Simulador "dos"           | IMPL
+                                | sonido al doble                     |                           |
 Plausibilidad (DFMEA RPN 120)   | Envolvente física contra el último  | Simulador "salto"         | HECHO en
                                 | dato confiable                      |                           | modelo
 Trenes sin nodo                 | Circuito sin explicar: cierra como  | Simulador "via"           | HECHO en
                                 | siempre                             |                           | modelo
 8.6.7 / R-23 / E-20 campana     | Firmware: 1 toque por s (200 ms a   | Sonómetro a 1 m           | IMPL en
-1 por s, >= 95 dB a 1 m         | 2,5 kHz). Falta el hardware sonoro  |                           | firmware,
+1 por s, >= 95 dB a 1 m         | 1568 Hz, sol5; 60 dB con el brazo   |                           | firmware,
+(Anexo XII 5.5: 60 dB abajo)    | abajo). Falta el hardware sonoro    |                           |
                                 |                                     |                           | FALTA HW
 Decreto 779/95: óptica roja,    | LED rojo único, dos estados         | Inspección                | IMPL
 sin verde                       | (no seguro o apagado)               |                           |
@@ -1240,8 +1243,11 @@ para no perder la quinta ranura: hAccCm (2 bytes) pasa a 1 byte en decímetros
     esperando en la señal de atrás, en la misma vía.
   - En tramos de 3 o 4 vías (el Roca tiene tramos cuádruples) hay más.
   - Un tren puede circular a contramano en una vía en operación especial.
-  - El SETOP 5.2.3.3 h habla de hasta dos trenes a la vez y el Anexo XII
-    pide la indicación "OTRO TREN". O sea, la norma cuenta con dos.
+  - El Anexo XII pide la indicación "OTRO TREN", o sea que cuenta con un
+    segundo tren. (CORRECCIÓN 10-oct: el SETOP 5.2.3.3 h NO dice que la
+    norma cuente con dos trenes: es una de las condiciones para que la
+    visibilidad sea satisfactoria, "no pueden circular más de dos trenes a
+    la vez".)
 - Por eso el cruce no supone "uno por sentido": sigue a cada tren por su ID
   (hasta 4 en la tabla), sabe de qué lado viene cada uno por su rumbo desde
   el cruce y si se acerca o se aleja, y prende OTRO TREN cuando hay dos en
@@ -1265,3 +1271,43 @@ Se controla con:
   circuito, y como PANDA solo sostiene la barrera alta con ETA de peor caso
   mayor a 32 s, el circuito todavía tiene ese tiempo.
 ================================================================================
+
+
+18.8 Revisión legal del firmware (10-oct, contra el Anexo XII y el SETOP)
+--------------------------------------------------------------------------------
+Cambios hechos en el firmware y en el deck del Hito 3:
+- Luces y campana de la maqueta también en SUBIENDO (SETOP 8.6.6: hasta que el
+  brazo recupera la vertical). El Anexo XII 20 las corta al iniciar el
+  ascenso, pero el Anexo 4.1 obliga a cumplir el SETOP, que es obligatorio
+  (1.2) y no admite acuerdos que lo violen (1.4). Arregla además el caso
+  SUBIENDO -> BAJANDO, que antes bajaba con 0 s de luces previas.
+- Sector de aproximación (Anexo XII 19 y 20): con el cierre pedido, un tren
+  que se acerca lo sostiene hasta ETA de 40 s (32 + 3 de subida + 5 de
+  espera). Solo trenes que se acercan, para no perder la ganancia del tren
+  detenido (con todos, un tren parado sostendría hasta 656 m en vez de 448).
+- OTRO TREN intermitente cada 0,5 s y rojo peatonal intermitente durante t_p
+  (17,1 s) y después fijo (Anexo XII 4.2).
+- Campana: 1568 Hz (sol5 con La3 = 440; con La4 = 440 serían 784 Hz, A
+  VERIFICAR con la IRAM 4036) y nivel reducido con el brazo horizontal
+  (Anexo XII 5.5, obligatorio en el pliego).
+- Alarmas del punto 22: la g) se redefine como "el brazo no sigue el pedido
+  de cierre" (la original salta en cada tren lento atribuido); la f) igual.
+- Lámina 26 con los desvíos nuevos; láminas 8, 16, 20, 22 y 23 corregidas.
+Desvíos declarados (no se cambian):
+- FALLA: rojo peatonal fijo sin sonido (el Anexo usa "apagado" como falla).
+- Sin verde (Anexo XII 4.2).
+- Barrera arriba con tren detenido lejos (Anexo 18 d), amparado en SETOP
+  8.6.13 y en el ETA de peor caso.
+- Un tren lento que se aleja retiene la barrera (a 20 km/h unos 55 s desde
+  el frente contra 37 s de la cola) porque el peor caso supone que puede
+  frenar y volver. Conservador, solo debajo de unos 35 km/h.
+- Óptica de 200 mm y bocina de 100 dB contra 21 cm cuadradas y 60 a 95 dB(A)
+  ajustables del Anexo 4.2: a adecuar en el producto.
+Datos para la defensa:
+- La Tabla I del SETOP es de distancias (rombo de visibilidad): el Anexo
+  saca 12/14/16 s de 400/467/534 m a 120 km/h.
+- Rojo peatonal con barrera: al menos 31 s antes del tren, cumple el t_sem
+  del Anexo mientras d_p <= (31 - 3) x 0,7 = 19,6 m.
+- Tablero de proximidad (Anexo 6, a 0,278 x 120 x 12 = 400 m): a velocidad
+  constante la barrera ya está horizontal entre 448 y 553 m, así que el
+  conductor ve el testigo fijo.

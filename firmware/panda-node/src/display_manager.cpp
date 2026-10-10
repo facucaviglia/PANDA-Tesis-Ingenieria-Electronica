@@ -326,13 +326,13 @@ static void printStatusLine() {
                     static_cast<double>(cs.closingMps), static_cast<double>(cs.etaCvS),
                     static_cast<double>(cs.etaMinS));
     }
-    Serial.printf(" bar %s via %s%s%s | ",
+    Serial.printf(" bar %s via %s%s%s%s | ",
                   cfg::crossing::kBarrierOnBoard
                       ? crossio::barrierPhaseName(static_cast<crossio::BarrierPhase>(cs.barrierPhase))
                       : (cs.barrierDown ? "BAJA" : "alta"),
                   cs.trackOccupied ? "OCUPADA" : "libre",
                   cs.trackOccupied ? (cs.trackExplained ? " explicada" : " SIN NODO") : "",
-                  cs.otherTrain ? " OTRO TREN" : "");
+                  cs.otherTrain ? " OTRO TREN" : "", (cs.alarmBarrier || cs.alarmTrackLong) ? " ALARMA" : "");
   }
   radiolink::RxStatus rx{};
   if (radiolink::latestRx(rx)) {

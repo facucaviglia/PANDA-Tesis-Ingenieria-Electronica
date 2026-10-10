@@ -67,21 +67,22 @@ static void printInfo() {
                   static_cast<double>(cs.circuitBearingDeg), static_cast<unsigned long>(cs.passages),
                   static_cast<unsigned long>(cs.trackWithoutPanda), static_cast<unsigned long>(cs.silentReleases),
                   static_cast<unsigned long>(cs.inconsistencies), static_cast<unsigned long>(cs.watchdogTrips));
-    Serial.printf("Umbral ETA %.0f s (fono %.0f + bajada %.0f + despeje %.0f + margen %.0f), a_max %.1f m/s2 hasta "
-                  "%.0f km/h, tope %.0f km/h, ocupación %.0f m, E-9 %lu ms\n",
+    Serial.printf("Umbral ETA %.0f s (fono %.0f + bajada %.0f + despeje %.0f + margen %.0f), liberación %.0f s, "
+                  "a_max %.1f m/s2 hasta %.0f km/h, tope %.0f km/h, ocupación %.0f m, E-9 %lu ms\n",
                   static_cast<double>(cfg::crossing::kAlertEtaS), static_cast<double>(cfg::crossing::kFonoluminosaS),
                   static_cast<double>(cfg::crossing::kArmDownS), static_cast<double>(cfg::crossing::kClearanceS),
-                  static_cast<double>(cfg::crossing::kLatencyMarginS), static_cast<double>(cfg::crossing::kMaxAccelMps2),
+                  static_cast<double>(cfg::crossing::kLatencyMarginS), static_cast<double>(cfg::crossing::kReleaseEtaS),
+                  static_cast<double>(cfg::crossing::kMaxAccelMps2),
                   static_cast<double>(cfg::crossing::kAccelKneeMps) * 3.6,
                   static_cast<double>(cfg::crossing::kLineMaxSpeedMps) * 3.6,
                   static_cast<double>(cfg::crossing::kOccupiedRadiusM),
                   static_cast<unsigned long>(cfg::beacon::kLinkTimeoutMs));
-    Serial.printf("Barrera: %s (%s), pedido de cierre %s\n",
+    Serial.printf("Barrera: %s (%s), pedido de cierre %s. Alarmas 22 g) %s, 22 f) %s\n",
                   cfg::crossing::kBarrierOnBoard
                       ? crossio::barrierPhaseName(static_cast<crossio::BarrierPhase>(cs.barrierPhase))
                       : (cs.barrierDown ? "BAJA" : "alta"),
                   cfg::crossing::kBarrierOnBoard ? "maqueta en esta placa" : "controlador externo",
-                  cs.closeRequest ? "SI" : "no");
+                  cs.closeRequest ? "SI" : "no", cs.alarmBarrier ? "ACTIVA" : "no", cs.alarmTrackLong ? "ACTIVA" : "no");
   }
 #endif
   Serial.printf("GNSS a %lu baud, PSRAM libre %lu KB\n", static_cast<unsigned long>(g_stats.gnssBaud.load()),

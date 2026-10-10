@@ -40,19 +40,28 @@ static void writePin(int pin, bool high) {
   gpio_set_level(static_cast<gpio_num_t>(pin), high ? 1 : 0);
 }
 
-// Solo se llama desde el timer: el buzzer tiene un único dueño.
-static void buzzer(bool on) {
-  static bool last = false;
-  static bool first = true;
-  if (!first && on == last) return;
-  first = false;
-  last = on;
+// Solo se llama desde el timer: el buzzer tiene un único dueño. Con low, el
+// nivel reducido de la campana con el brazo horizontal (Anexo XII 5.5).
+static void buzzer(bool on, bool low) {
+  static int last = -1;  // 0 apagado, 1 pleno, 2 reducido
+  const int level = !on ? 0 : (low ? 2 : 1);
+  if (level == last) return;
+  last = level;
   if (cfg::crossing::kBuzzerIsActive) {
+    // Un buzzer activo no se puede atenuar.
     writePin(pins::kOutBuzzer, on);
     return;
   }
-  // ledcWriteTone con frecuencia 0 apaga el PWM.
+  // ledcWriteTone con frecuencia 0 apaga el PWM. Con otra frecuencia deja el
+  // ciclo de trabajo al 50 % (nivel pleno), que después se baja si hace falta.
   ledcWriteTone(kBuzzerChannel, on ? cfg::crossing::kBeepHz : 0);
+  if (level == 2) ledcWrite(kBuzzerChannel, cfg::crossing::kBellLowDuty);
+}
+
+// Fase de una señal intermitente del Anexo XII que arrancó en sinceUs:
+// medio segundo encendida, medio segundo apagada, empezando encendida.
+static bool flashOn(int64_t nowUs, int64_t sinceUs) {
+  return ((nowUs - sinceUs) / 1000 / cfg::crossing::kFlashHalfMs) % 2 == 0;
 }
 
 static void writeContacts(bool libre, bool ok) {
@@ -101,7 +110,12 @@ static void setServo(float pos) {
   ledcWrite(kServoChannel, static_cast<uint32_t>(us / (1e6f / kServoHz) * maxCount));
 }
 
-static bool barrierTick(int64_t now) {
+struct Bell {
+  bool on;   // La campana suena mientras hay señales
+  bool low;  // Brazo horizontal: nivel reducido
+};
+
+static Bell barrierTick(int64_t now) {
   const bool ok = s_contactOk.load();
   const bool request = ok ? !s_contactLibre.load() : trackOccupied();
   BarrierPhase p = static_cast<BarrierPhase>(s_phase.load());
@@ -130,6 +144,9 @@ static bool barrierTick(int64_t now) {
       if (!request) enter(BarrierPhase::Subiendo);
       break;
     case BarrierPhase::Subiendo:
+      // Las señales siguen encendidas durante la subida, así que si el pedido
+      // vuelve, el descenso empieza con las luces ya encendidas sin corte
+      // desde la fonoluminosa: el preaviso de 5 s del SETOP 8.6.6 se cumple.
       if (request) {
         enter(BarrierPhase::Bajando);
         break;
@@ -141,11 +158,15 @@ static bool barrierTick(int64_t now) {
   s_phase.store(static_cast<uint8_t>(p));
   setServo(s_armPos);
 
-  const bool signals = (p == BarrierPhase::Fono || p == BarrierPhase::Bajando || p == BarrierPhase::Abajo);
+  // SETOP 8.6.6: las luces siguen hasta que el brazo recupera la vertical. El
+  // Anexo XII (punto 20) las corta al iniciar el ascenso, pero el propio
+  // Anexo (4.1) obliga a cumplir el SETOP, que es obligatorio y no admite
+  // acuerdos que lo violen (SETOP 1.2 y 1.4).
+  const bool signals = p != BarrierPhase::Arriba;
   const bool aOn = ((now / 1000) / cfg::crossing::kBarrierLightHalfMs) % 2 == 0;
   writePin(pins::kOutBarrierLightA, signals && aOn);
   writePin(pins::kOutBarrierLightB, signals && !aOn);
-  return signals;  // La campana suena mientras hay señales
+  return {signals, p == BarrierPhase::Abajo};
 }
 
 // ---------------------------------------------------------------------------
@@ -162,12 +183,17 @@ static void onTick(void*) {
     }
   }
 
-  const bool bell = cfg::crossing::kBarrierOnBoard ? barrierTick(now) : false;
-  const uint32_t period =
+  // Un solo buzzer para dos fuentes: la campana de la maqueta (un toque por
+  // segundo, SETOP 8.6.7) y el aviso de PANDA (uno por segundo, dos con OTRO
+  // TREN). Suena si toca cualquiera de las dos. Con el brazo horizontal baja
+  // todo el buzzer, porque en la maqueta es un único emisor.
+  const Bell bell = cfg::crossing::kBarrierOnBoard ? barrierTick(now) : Bell{false, false};
+  const int64_t ms = now / 1000;
+  const bool bellBeat = bell.on && (ms % cfg::crossing::kBeepPeriodMs) < cfg::crossing::kBeepOnMs;
+  const uint32_t pandaPeriod =
       s_otherTrain.load() ? cfg::crossing::kBeepPeriodOtherTrainMs : cfg::crossing::kBeepPeriodMs;
-  const uint32_t phaseMs = static_cast<uint32_t>((now / 1000) % period);
-  const bool soundOn = (s_pandaSound.load() || bell) && !s_muted.load();
-  buzzer(soundOn && phaseMs < cfg::crossing::kBeepOnMs);
+  const bool pandaBeat = s_pandaSound.load() && (ms % pandaPeriod) < cfg::crossing::kBeepOnMs;
+  buzzer((bellBeat || pandaBeat) && !s_muted.load(), bell.low);
 }
 
 void begin() {
@@ -210,14 +236,34 @@ void begin() {
 }
 
 void apply(const Outputs& out) {
+  // Solo la llama la tarea de decisión, así que estos estáticos tienen un
+  // único dueño. Las intermitencias se calculan acá, a 20 Hz.
+  static bool lastWarn = false;
+  static bool lastOther = false;
+  static int64_t warnSinceUs = 0;
+  static int64_t otherSinceUs = 0;
+  const int64_t now = esp_timer_get_time();
+  if (out.sound && !lastWarn) warnSinceUs = now;
+  if (out.otherTrain && !lastOther) otherSinceUs = now;
+  lastWarn = out.sound;
+  lastOther = out.otherTrain;
+
+  // Anexo XII 4.2: el rojo peatonal es intermitente durante t_p desde que
+  // arranca el aviso y después fijo. En FALLA o al arrancar queda fijo.
+  const bool pedFlash =
+      out.sound && (now - warnSinceUs) < static_cast<int64_t>(cfg::crossing::kPedestrianCrossS * 1e6f);
+  const bool pedOn = out.pedestrian && (!pedFlash || flashOn(now, warnSinceUs));
+  // Anexo XII 4.2: OTRO TREN intermitente cada medio segundo.
+  const bool otherOn = out.otherTrain && flashOn(now, otherSinceUs);
+
   writeContacts(out.pandaLibre, out.pandaOk);
-  writePin(pins::kOutPedestrian, out.pedestrian);
-  writePin(pins::kOutOtherTrain, out.otherTrain);
+  writePin(pins::kOutPedestrian, pedOn);
+  writePin(pins::kOutOtherTrain, otherOn);
   s_pandaSound.store(out.sound);
   s_otherTrain.store(out.otherTrain);
   s_muted.store(out.muted);
 
-  s_lastApplyUs.store(esp_timer_get_time());
+  s_lastApplyUs.store(now);
   s_tripped.store(false);
   // TODO(tpl5010): pulso en el pin DONE del watchdog externo (ver config.h).
 }

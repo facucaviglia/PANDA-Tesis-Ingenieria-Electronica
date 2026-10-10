@@ -21,6 +21,9 @@ CLEARANCE_S = 14.0            # vía doble, separación entre rieles extremos 5 
 BARRIER_CYCLE_S = FONOLUMINOSA_S + ARM_DOWN_S + CLEARANCE_S
 LATENCY_MARGIN_S = 1.0
 ALERT_ETA_S = BARRIER_CYCLE_S + LATENCY_MARGIN_S       # 32 s
+ARM_UP_S = 3.0                # subida del brazo (maqueta), Anexo XII punto 20
+APPROACH_WAIT_S = 5.0         # espera por aproximación, Anexo XII punto 20
+RELEASE_ETA_S = ALERT_ETA_S + ARM_UP_S + APPROACH_WAIT_S  # 40 s: sector de aproximación
 MAX_ACCEL = 1.0               # perfil de peor caso del CSR del Roca
 ACCEL_KNEE = 11.1
 LINE_MAX = 33.3
@@ -28,6 +31,7 @@ MAX_TRAIN_LENGTH_M = 210.0
 OCCUPIED_RADIUS_M = MAX_TRAIN_LENGTH_M + 30.0
 DESIGN_SPEED = 120.0 / 3.6
 TRACK_CIRCUIT_DIST_M = BARRIER_CYCLE_S * DESIGN_SPEED   # 1033 m
+APPROACH_DIST_M = (ARM_UP_S + APPROACH_WAIT_S) * DESIGN_SPEED   # 267 m más allá del de operación
 ATTRIBUTION_TOL_M = 100.0
 CIRCUIT_SIDE = -1             # lado del circuito: trenes con s < 0
 PLAUS_POS_TOL_M = 10.0
@@ -145,6 +149,8 @@ class ModeloCruce:
         self.t_cierre_panda = 0.0     # tiempo con pedido de cierre de PANDA
         self.t_via_ocupada = 0.0      # tiempo con algún circuito ocupado (sistema actual)
         self.via_b = False            # circuito de la otra vía: solo para comparar con el sistema actual
+        self.aprox = False            # algún tren en un sector de aproximación (sistema actual)
+        self.cerrado_actual = False   # barrera del sistema actual (circuitos)
 
     def beacon(self, t, node_id, s, v, sentido, con_fix, a=None, hacc=1.5):
         x = self.trenes.get(node_id) or self.trenes.setdefault(node_id, TrenModelo(node_id, t))
@@ -209,9 +215,14 @@ class ModeloCruce:
     def set_via_b(self, ocupada):
         self.via_b = ocupada
 
+    def set_aprox(self, ocupado):
+        self.aprox = ocupado
+
     def tick(self, t):
         via_fell = getattr(self, "via_fell", False)
         self.via_fell = False
+        # Con el cierre ya pedido, un tren que se acerca lo sostiene hasta 40 s.
+        cerrado = self.estado is not None and self.estado[0] == "NO SEGURO"
         for x in list(self.trenes.values()):
             fresh = x.last_valid is not None and t - x.last_valid <= LINK_TIMEOUT_S
             if x.silent_since is not None and self.via:
@@ -226,7 +237,8 @@ class ModeloCruce:
                     x.cola_paso = False
                 in_zone = x.dist <= OCCUPIED_RADIUS_M and not x.cola_paso
                 implausible = t < x.implausible_until
-                danger = implausible or (x.dist <= RELEVANT_RADIUS_M and (in_zone or x.eta_min <= ALERT_ETA_S))
+                umbral = RELEASE_ETA_S if (cerrado and x.closing > MIN_CLOSING) else ALERT_ETA_S
+                danger = implausible or (x.dist <= RELEVANT_RADIUS_M and (in_zone or x.eta_min <= umbral))
                 x.phase = ("EN_ZONA" if in_zone else "APROXIMA" if danger
                            else "SE_ALEJA" if x.closing < -MIN_CLOSING else "LEJOS")
                 if danger:
@@ -286,10 +298,13 @@ class ModeloCruce:
         self.otro_tren = len(alerta) >= 2 or (len(alerta) >= 1 and via_sin_explicar)
         self.pedido_cierre = not self.panda_libre     # PANDA operativo en el modelo
 
+        # Sistema actual: cierra con un circuito de operación ocupado y no sube
+        # si hay un tren en el sector de aproximación (Anexo XII, punto 20).
+        self.cerrado_actual = self.via or self.via_b or (self.cerrado_actual and self.aprox)
         if self.t_prev is not None:
             dt = t - self.t_prev
             self.t_cierre_panda += dt if self.pedido_cierre else 0.0
-            self.t_via_ocupada += dt if (self.via or self.via_b) else 0.0
+            self.t_via_ocupada += dt if self.cerrado_actual else 0.0
         self.t_prev = t
 
         clave = estado[:3] + (self.otro_tren,)

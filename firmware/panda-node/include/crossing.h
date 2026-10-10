@@ -92,6 +92,10 @@ struct CrossingStatus {
   bool trackEnabled;        // Entrada física habilitada (si no, se simula)
   bool muted;
 
+  // Alarmas para el monitoreo remoto (Anexo XII, punto 22)
+  bool alarmBarrier;        // g) redefinida: brazo arriba o subiendo con pedido de cierre
+  bool alarmTrackLong;      // f) circuito de vía ocupado por más de 10 minutos
+
   // Referencia del cruce
   RefSource refSource;
   int32_t refLatE7;

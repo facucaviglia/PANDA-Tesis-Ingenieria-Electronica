@@ -9,8 +9,11 @@
 //   PANDA operativo  Contacto cerrado solo cuando el nodo está sano. Si cae, el
 //                    controlador de barrera ignora a PANDA y vuelve al
 //                    comportamiento actual (solo circuito de vía).
-//   Señal peatonal   LED rojo "CRUCE NO SEGURO". Nunca hay verde.
+//   Señal peatonal   LED rojo "CRUCE NO SEGURO". Nunca hay verde. Con aviso
+//                    de tren, intermitente cada 0,5 s durante t_p y después
+//                    fijo (Anexo XII 4.2). En FALLA o al arrancar, fijo.
 //   OTRO TREN        LED del Anexo XII: hay más de un tren en peligro.
+//                    Intermitente cada 0,5 s (Anexo XII 4.2).
 //   Sonido           Un toque por segundo mientras el cruce está NO SEGURO,
 //                    dos por segundo con OTRO TREN.
 //
@@ -23,10 +26,12 @@
 // el controlador real, con la regla acordada:
 //   con PANDA operativo:   baja si PANDA pide cierre
 //   sin PANDA operativo:   baja si el circuito de vía está ocupado (como hoy)
-// Secuencia del Anexo XII: fonoluminosa (luces alternadas cada 0,5 s y
-// campana), bajada del brazo, brazo abajo hasta que se levanta el pedido, y
-// subida con las señales apagadas. Si el pedido vuelve mientras sube, baja de
-// inmediato con las señales encendidas.
+// Secuencia: fonoluminosa de 7 s (luces alternadas cada 0,5 s y campana,
+// Anexo XII punto 20), bajada del brazo, brazo abajo hasta que se levanta el
+// pedido (campana a nivel reducido, Anexo XII 5.5) y subida con las señales
+// todavía encendidas hasta que el brazo llega a la vertical (SETOP 8.6.6).
+// Si el pedido vuelve mientras sube, baja de inmediato: las luces vienen
+// encendidas sin corte desde la fonoluminosa.
 //
 // Vigilancia: la tarea de decisión (core 1) refresca las salidas cada 50 ms.
 // Un timer que corre en el core 0 verifica ese refresco: si pasan más de
@@ -43,7 +48,7 @@ struct Outputs {
   bool pandaLibre;
   bool pandaOk;
   bool pedestrian;
-  bool sound;        // Aviso sonoro de PANDA
+  bool sound;        // Aviso de PANDA (NO SEGURO): sonido e intermitencia peatonal
   bool otherTrain;   // Más de un tren en peligro
   bool muted;        // Silencia todo el sonido (banco)
 };
@@ -52,8 +57,8 @@ enum class BarrierPhase : uint8_t {
   Arriba = 0,   // Brazo vertical, señales apagadas
   Fono,         // Fonoluminosa: luces y campana antes de bajar
   Bajando,
-  Abajo,
-  Subiendo,
+  Abajo,        // Brazo horizontal: campana a nivel reducido
+  Subiendo,     // Señales encendidas hasta llegar a la vertical
 };
 
 // Configura los pines en estado seguro y arranca el timer de vigilancia,

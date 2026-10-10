@@ -35,7 +35,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from verify_crypto import seal  # noqa: E402
-from modelo_cruce import TRACK_CIRCUIT_DIST_M  # noqa: E402
+from modelo_cruce import APPROACH_DIST_M, TRACK_CIRCUIT_DIST_M  # noqa: E402
 
 try:
     import serial
@@ -108,6 +108,12 @@ class Tren:
             return False
         cola = self.s + self.largo
         return self.s <= TRACK_CIRCUIT_DIST_M and cola >= -JUNTA_SALIDA_M
+
+    def en_aproximacion(self):
+        """Frente dentro del sector de aproximación de su vía, acercándose. Solo
+        para comparar con el sistema actual (no está cableado a la placa)."""
+        d = -self.sentido * self.s
+        return self.v > 0 and TRACK_CIRCUIT_DIST_M < d <= TRACK_CIRCUIT_DIST_M + APPROACH_DIST_M
 
     def frenar_a(self, v_kmh, decel):
         self.v_obj, self.a = v_kmh / 3.6, decel
@@ -196,6 +202,16 @@ def esc_dos(t, tr, acc):
     return len(tr) < 2 or tr[0].s < 600 or tr[1].s > -600
 
 
+def esc_aproximacion(t, tr, acc):
+    """Sector de aproximación del Anexo XII: pasa un tren a 100 km/h y otro
+    viene en sentido contrario. Sin la histéresis de 40 s la barrera subiría
+    y volvería a bajar a los 4 s; con ella no sube hasta que pasa el segundo."""
+    if t == 0:
+        tr.append(Tren(0xA001, -1500, 100, +1))
+        tr.append(Tren(0xA002, 2850, 100, -1))
+    return tr[0].s < 600 or tr[1].s > -600
+
+
 def esc_repeticion(t, tr, acc):
     """Tren normal más un atacante que reinyecta un paquete grabado cada 2 s."""
     if t == 0:
@@ -255,6 +271,7 @@ ESCENARIOS = {
     "perdida": esc_perdida,
     "silencio": esc_silencio,
     "dos": esc_dos,
+    "aproximacion": esc_aproximacion,
     "repeticion": esc_repeticion,
     "cmac": esc_cmac,
     "sin_posicion": esc_sin_posicion,
@@ -329,6 +346,7 @@ def correr_seco(args):
             otras.append((round(t, 1), "v"))
             modelo.set_via(t, via_sim)
         modelo.set_via_b(any(x.ocupa_circuito_otra_via() for x in trenes))
+        modelo.set_aprox(any(x.en_aproximacion() for x in trenes))
         for a in acciones:
             if isinstance(a, tuple):
                 crudos += 1
@@ -348,6 +366,7 @@ def correr_seco(args):
             otras.append((round(t, 1), "v"))
             modelo.set_via(t, via_sim)
         modelo.set_via_b(any(x.ocupa_circuito_otra_via() for x in trenes))
+        modelo.set_aprox(any(x.en_aproximacion() for x in trenes))
         modelo.tick(t)
 
     print(f"{args.escenario}: {beacons} beacons válidos, {crudos} paquetes crudos, circuito {otras}, "

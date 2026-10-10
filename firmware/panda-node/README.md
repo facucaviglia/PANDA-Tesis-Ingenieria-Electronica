@@ -78,8 +78,8 @@ PANDA es el **sistema principal** del cruce y el circuito de vía queda de **res
 | Estado | Señal peatonal | Contacto PANDA libre | Contacto PANDA operativo | Sonido |
 |---|---|---|---|---|
 | **APAGADO** | apagada (no afirma nada, nunca hay verde) | cerrado | cerrado | no |
-| **NO SEGURO** | encendida | abierto = pedido de cierre | cerrado | 1 toque por segundo (2 con OTRO TREN) |
-| **FALLA** | encendida | abierto | abierto = ignorar a PANDA | no |
+| **NO SEGURO** | intermitente cada 0,5 s durante t_p (17,1 s) y después fija (Anexo XII 4.2) | abierto = pedido de cierre | cerrado | 1 toque por segundo (2 con OTRO TREN) |
+| **FALLA** | encendida fija | abierto | abierto = ignorar a PANDA | no |
 | **INICIANDO** (3 s) | encendida (prueba de lámpara) | abierto | abierto | no |
 
 ### Cuándo es NO SEGURO
@@ -92,7 +92,11 @@ Basta con una sola de estas condiciones. El cruce se apaga recién cuando no se 
 4. **Tren sin posición, no verificable o con dato inconsistente** (plausibilidad).
 5. **Vía ocupada sin nodo**: el circuito de vía se ocupó y PANDA no sigue al tren que lo ocupó. Cierra como siempre.
 
+**Liberación (sector de aproximación).** Una vez pedido el cierre, un tren que se acerca lo sigue sosteniendo hasta que su ETA de peor caso supera **40 s** (`kReleaseEtaS` = 32 + 3 s de subida + 5 s de espera). Es el equivalente en tiempo del sector de aproximación del Anexo XII (puntos 19 y 20): la barrera no sube si hay otro tren en aproximación, y entre que el brazo llega arriba y el próximo ciclo pasan al menos 5 s. Un tren detenido no está en aproximación: no la sostiene, y si arranca el umbral de 32 s le da el ciclo completo (SETOP 8.6.13).
+
 Pasa a **FALLA** si el nodo no puede cumplir su función: la tarea de radio no responde, no tiene tiempo GPS propio o no tiene la posición del cruce.
+
+> **Desvío declarado (Anexo XII 4.2).** El Anexo pide verde sin trenes, rojo con sonido simultáneo al aproximarse, y usa la señal apagada como estado de falla (cartel "APAGADO: PARE, MIRE Y ESCUCHE"). PANDA no tiene verde (nunca afirma que se puede cruzar) y en FALLA deja el rojo fijo sin sonido: lo que PANDA no puede asegurar es NO SEGURO, y como no hay verde, apagado se vería igual que "sin trenes". El sonido no acompaña a la falla para no enseñar a ignorarlo.
 
 ### Umbral: el ciclo de barrera de ADIF
 
@@ -105,6 +109,8 @@ Pasa a **FALLA** si el nodo no puede cumplir su función: la tarea de radio no r
 | **Total** | **32 s** | |
 
 En un paso **solo peatonal** (`kHasBarrier = false`) el umbral es t_sem + 1 s, con t_sem = d_p / 0,7 m/s + 3 s (Anexo XII, punto 4.2): 21,1 s con 12 m de cruce.
+
+Con barrera, el rojo peatonal se enciende con el pedido de cierre, al menos 31 s antes del tren. Eso cumple el t_sem del Anexo mientras d_p ≤ (31 − 3) × 0,7 = **19,6 m** entre líneas de detención peatonal.
 
 ### ETA de peor caso
 
@@ -158,6 +164,13 @@ Para un ensayo, dejá el nodo quieto en el lugar unos minutos y guardá con `c`.
 - **Watchdog de tareas** del ESP-IDF: si la decisión no vuelve en 5 s, reinicia el micro. Durante el reinicio los pull-down externos dejan todo en estado seguro.
 - **Watchdog externo TPL5010**: TODO, comentado en `config.h` (pin DONE en el GPIO 46).
 
+### Alarmas para el monitoreo remoto (Anexo XII, punto 22)
+
+- **22 g) redefinida.** La original, "brazo de barrera levantado con circuito de vía ocupado", con PANDA principal saltaría en cada tren lento atribuido (entre los 1033 m y el punto de cierre de PANDA). Se reemplaza por "**el brazo no sigue la regla del controlador**": hay pedido de cierre (de PANDA, o del circuito si PANDA no está operativo) y el brazo sigue arriba o subiendo más de 1 s (`kAlarmBarrierMs`). Necesita la posición del brazo, que el punto 22 e) ya exige; en el prototipo la da la maqueta. Evento `AlarmBarrier` (22).
+- **22 f)** circuito ocupado más de 10 minutos, igual que hoy. Evento `AlarmTrackLong` (23).
+
+En el producto la telealarma existente aplica la misma regla con los dos contactos de PANDA. Las dos salen en la consola (`i` y línea de estado).
+
 ## 4 ter. Cableado del nodo cruce y maqueta de barrera
 
 Con `kBarrierOnBoard = true` (por defecto) la **misma T-Beam maneja la maqueta**. El controlador de la maqueta es un módulo aparte del firmware (`crossing_io.cpp`) que solo ve los dos contactos de PANDA y el circuito de vía, igual que el controlador real:
@@ -165,7 +178,11 @@ Con `kBarrierOnBoard = true` (por defecto) la **misma T-Beam maneja la maqueta**
 - PANDA operativo: la barrera baja si PANDA pide cierre.
 - PANDA no operativo: la barrera baja si el circuito está ocupado, que es el comportamiento actual.
 
-Secuencia del Anexo XII: **fonoluminosa** 7 s (luces alternadas cada 0,5 s y campana), **bajada** (6 s en la maqueta, dentro de los 5 a 10 s del pliego), **abajo** hasta que se levanta el pedido, **subida** (3 s) con las señales apagadas. Si el pedido vuelve mientras sube, baja de inmediato.
+Secuencia: **fonoluminosa** 7 s (luces alternadas cada 0,5 s y campana, Anexo XII punto 20), **bajada** (6 s en la maqueta, dentro de los 5 a 10 s del pliego), **abajo** hasta que se levanta el pedido, con la campana a nivel reducido (Anexo XII 5.5), y **subida** (3 s) con las señales todavía encendidas hasta que el brazo llega a la vertical (SETOP 8.6.6). Si el pedido vuelve mientras sube, baja de inmediato: las luces vienen encendidas sin corte desde la fonoluminosa, así que el preaviso de 5 s se cumple.
+
+> El Anexo XII (punto 20) corta las señales al iniciar el ascenso, pero el mismo Anexo (4.1) obliga a cumplir el SETOP 7/81, que es obligatorio y no admite acuerdos que lo violen (SETOP 1.2 y 1.4). Por eso manda el 8.6.6.
+
+Limitaciones de la maqueta: hay un solo buzzer para la campana y el aviso de PANDA (comparten tono, y con el brazo horizontal baja todo el buzzer); con un buzzer activo no hay nivel reducido; no hay detección de rotura del brazo (Anexo XII 5.5 pide volver a 95 dB si se rompe).
 
 | GPIO | Con maqueta en la placa | Con controlador externo | Estado seguro |
 |---|---|---|---|
@@ -173,8 +190,8 @@ Secuencia del Anexo XII: **fonoluminosa** 7 s (luces alternadas cada 0,5 s y cam
 | 38 | Luz roja A de la barrera | Relé **PANDA operativo** | bajo |
 | 3 | Luz roja B de la barrera (alterna con la A) | sin uso | bajo |
 | 39 | **Señal peatonal** NO SEGURO (LED rojo) | igual | la maneja la lógica |
-| 45 | **OTRO TREN** (LED con resistencia a GND, nada de pull-up: es pin de arranque) | igual | bajo |
-| 48 | **Sonido**: buzzer pasivo (PWM 2,5 kHz) o activo (`kBuzzerIsActive`) con transistor | igual | apagado |
+| 45 | **OTRO TREN**, intermitente cada 0,5 s (LED con resistencia a GND, nada de pull-up: es pin de arranque) | igual | bajo |
+| 48 | **Sonido**: buzzer pasivo (PWM a 1568 Hz, sol5, nivel reducido con el brazo abajo) o activo (`kBuzzerIsActive`) con transistor | igual | apagado |
 | 2 | Entrada **circuito de vía**: interruptor a GND (cerrado = LIBRE), después optoacoplador | igual | abierto = OCUPADA |
 
 - Cada salida lleva **un pull-down de 10 kΩ a GND**. Un LED se puede manejar directo con 330 Ω. El buzzer y la sirena, con un transistor NPN (BC547 o 2N2222) y 1 kΩ en la base.
@@ -207,15 +224,18 @@ python tools/sim_trenes.py --seco --escenario lento
 |---|---|---|
 | `rapido` | Tren a 100 km/h desde 1500 m | Circuito explicado a 1039 m, NO SEGURO a 1022 m, apaga cuando el circuito se libera. 44,3 s contra 44,8 s |
 | `lento` | Tren a 40 km/h desde 1500 m | Circuito explicado a 1034 m, NO SEGURO recién a 681 m. 80,2 s contra 111,9 s (**+31,7 s**) |
-| `detenido` | Frena y para a unos 500 m (dentro del circuito), espera 20 s, arranca | NO SEGURO a 793 m mientras frena, APAGADO parado a 500 m, NO SEGURO al arrancar. **+37,9 s** |
+| `detenido` | Frena y para a unos 500 m (dentro del circuito), espera 20 s, arranca | NO SEGURO a 793 m mientras frena, APAGADO recién parado a 500 m (mientras frena todavía se acerca y lo sostiene el umbral de 40 s), NO SEGURO al arrancar. **+35,1 s** |
 | `perdida` | Sin enlace entre 900 y 500 m | SIN DATOS 1 s después del corte (E-9), vuelve con datos |
 | `silencio` | El nodo del tren muere a 700 m | SIN DATOS hasta que el circuito se libera con la cola. +14,5 s |
 | `dos` | Dos trenes en sentidos opuestos | Dos ciclos, OTRO TREN cuando se superponen. -2,3 s (la otra vía no tiene su circuito cableado a la placa: se libera por radio, unos 4 s más tarde) |
+| `aproximacion` | Pasa un tren a 100 km/h y otro viene en sentido contrario | El segundo sostiene el cierre desde ETA 40 s: la barrera no sube entre los dos (sin la histéresis subiría y volvería a bajar a los 4 s). El sistema actual tampoco sube, por el sector de aproximación. -3,7 s, por lo mismo que `dos` |
 | `repeticion` | Un atacante reinyecta un paquete grabado | Se rechaza como `REPETIDO`, sin efecto en el estado |
 | `cmac` | Paquetes falsos sin la clave | Se rechazan como `CMAC`, sin efecto |
 | `sin_posicion` | Tren que se escucha sin fix | NO SEGURO (sin posición) hasta que da posición lejos |
 | `via` | Tren **sin nodo** a 80 km/h | Circuito sin explicar: NO SEGURO como siempre, mismo tiempo que hoy |
 | `salto` | El GNSS suma 300 m de error entre 800 y 700 m | `dato inconsistente` sin ningún hueco APAGADO, después sigue normal |
+
+La maqueta y las intermitencias tienen además una prueba en la PC, sin placa ni PlatformIO, con un reloj simulado: `sh test_pc/correr.sh`. Compila los archivos del cruce para los tres roles y verifica la secuencia de la barrera (luces también en la subida, al menos 5 s de luces antes de cada bajada, campana reducida con el brazo abajo) y las intermitencias del Anexo XII.
 
 > La inyección por USB y el tiempo desde la PC son **solo para banco**. En un nodo instalado hay que poner `kAllowInjection` y `kAllowPcTime` en `false` (`config.h`, sección `sim`).
 

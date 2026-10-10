@@ -31,7 +31,7 @@
 #error "Falta definir el rol: compilar con -e registrador, -e tren o -e cruce"
 #endif
 
-#define PANDA_FW_VERSION "0.4.0-panda-principal"
+#define PANDA_FW_VERSION "0.4.1-panda-principal"
 
 namespace cfg {
 
@@ -221,6 +221,8 @@ constexpr uint8_t kMacKey[16] = {0x50, 0x41, 0x4e, 0x44, 0x41, 0x2d, 0x4d, 0x41,
 //      (un tren sin nodo, o uno con el nodo caído): cierra como siempre.
 //   6. El propio nodo está en falla: se declara no operativo y la barrera
 //      vuelve a seguir solo al circuito de vía.
+// Una vez pedido el cierre, se libera recién cuando ningún tren que se acerca
+// puede llegar en kReleaseEtaS (equivalente del sector de aproximación).
 // Lo nuevo frente al sistema actual: si el circuito se ocupa por un tren que
 // PANDA sigue y ese tren todavía no puede llegar en kAlertEtaS, la barrera
 // queda alta. Ahí está la ganancia para los trenes que no vienen a la máxima.
@@ -244,13 +246,23 @@ constexpr float kArmDownS = 10.0f;
 constexpr float kClearanceS = 14.0f;
 constexpr float kBarrierCycleS = kFonoluminosaS + kArmDownS + kClearanceS;  // 31 s
 
+// Sector de aproximación (Anexo XII, puntos 19 y 20): subida del brazo (lo
+// mínimo que permita el mecanismo) más 5 s de espera desde que el brazo llega
+// arriba hasta que se puede reiniciar el ciclo. La barrera no sube si hay
+// otro tren en ese sector. En el prototipo la subida es la de la maqueta. En
+// el producto va la subida medida del mecanismo instalado.
+constexpr float kArmUpS = 3.0f;
+constexpr float kApproachWaitS = 5.0f;
+
 // --- Paso peatonal sin barrera (Anexo XII, punto 4.2) ------------------------
 // Si el cruce es solo peatonal, la señal se enciende t_sem = t_p + 3 s antes
 // del tren, con t_p = d_p / 0,7 m/s (velocidad del peatón de la Ley 22.431).
+// Durante t_p el rojo es intermitente cada medio segundo y después queda fijo.
 constexpr bool kHasBarrier = true;
 constexpr float kPedestrianPathM = 12.0f;   // Distancia entre líneas de detención
 constexpr float kPedestrianSpeedMps = 0.7f;
-constexpr float kPedestrianWarnS = kPedestrianPathM / kPedestrianSpeedMps + 3.0f;  // 20,1 s
+constexpr float kPedestrianCrossS = kPedestrianPathM / kPedestrianSpeedMps;  // t_p = 17,1 s
+constexpr float kPedestrianWarnS = kPedestrianCrossS + 3.0f;                  // t_sem = 20,1 s
 
 // Margen propio de PANDA: período de decisión, salida y reacción del
 // controlador. La antigüedad del dato ya se compensa proyectando la posición.
@@ -258,6 +270,15 @@ constexpr float kLatencyMarginS = 1.0f;
 
 // E-8b: umbral de decisión. Con barrera, 31 + 1 = 32 s.
 constexpr float kAlertEtaS = (kHasBarrier ? kBarrierCycleS : kPedestrianWarnS) + kLatencyMarginS;
+
+// Umbral para LIBERAR, equivalente en tiempo al sector de aproximación.
+// Mientras PANDA pide el cierre, un tren que se acerca lo sigue sosteniendo
+// hasta que su ETA de peor caso supere 32 + 3 + 5 = 40 s. Así, cuando PANDA
+// libera, ningún tren que se acerca puede volver a pedir el cierre antes de
+// que el brazo suba y pasen los 5 s de espera. Solo se aplica a trenes que se
+// acercan: uno detenido no está "en aproximación", y si arranca, el umbral de
+// cierre de 32 s le sigue dando el ciclo completo (SETOP 8.6.13).
+constexpr float kReleaseEtaS = kAlertEtaS + (kHasBarrier ? kArmUpS + kApproachWaitS : 0.0f);
 
 // --- Perfil de tracción de peor caso de la flota (línea piloto: Roca) -------
 // El ETA de peor caso supone que el tren acelera al máximo desde la velocidad
@@ -368,13 +389,46 @@ constexpr uint32_t kRefAvgWindow = 600;  // 60 s a 10 Hz
 // tiempo, un timer independiente en el otro núcleo las lleva a estado seguro.
 constexpr uint32_t kHeartbeatTimeoutMs = 300;
 
-// Aviso sonoro: un toque por segundo mientras el cruce está NO SEGURO (SETOP
-// 8.6.7 y Anexo XII, 60 a 240 golpes por minuto). Con OTRO TREN el ritmo se
-// duplica (el Anexo XII pide de 1,5 a 2 veces).
-constexpr uint32_t kBeepHz = 2500;
+// Aviso sonoro de PANDA: un toque por segundo mientras el cruce está NO
+// SEGURO (dentro de los 60 a 240 golpes por minuto del Anexo XII, punto 4.2).
+// Con OTRO TREN el ritmo se duplica (el Anexo pide de 1,5 a 2 veces). La
+// campana de la maqueta da siempre un toque por segundo (SETOP 8.6.7).
+//
+// Tono: el Anexo XII (5.5) pide para la campana alguna frecuencia de la
+// quinta octava de la IRAM 4036, preferentemente "sol". Con La3 = 440 Hz
+// (convención franco-belga, la usual en castellano) sol5 es 1568 Hz; con la
+// convención científica (La4 = 440 Hz) sería 784 Hz. A VERIFICAR con la
+// tabla II de la IRAM 4036. 1568 Hz además queda más cerca de la resonancia
+// de un piezo pasivo, que a 784 Hz suena bastante más bajo.
+// En la maqueta hay un solo buzzer para la campana y el aviso de PANDA, así
+// que comparten tono. El Anexo no fija tono para el aviso peatonal.
+constexpr uint32_t kBeepHz = 1568;
 constexpr uint32_t kBeepOnMs = 200;
 constexpr uint32_t kBeepPeriodMs = 1000;
 constexpr uint32_t kBeepPeriodOtherTrainMs = 500;
+
+// Nivel reducido (Anexo XII 5.5, obligatorio en el pliego; en el SETOP 8.6.7
+// es optativo para la comuna): con el brazo horizontal la campana baja de
+// 95 a 60 dB. Con el buzzer pasivo se baja el ciclo de trabajo del PWM (512 de
+// 1023 es el nivel pleno). El valor que da 60 dB hay que ajustarlo con el
+// sonómetro. Un buzzer activo no se puede atenuar: suena siempre pleno.
+constexpr uint32_t kBellLowDuty = 24;
+
+// Señales intermitentes del Anexo XII (rojo peatonal durante t_p y OTRO
+// TREN): encendido y apagado de medio segundo cada uno.
+constexpr uint32_t kFlashHalfMs = 500;
+
+// --- Monitoreo de alarmas (Anexo XII, punto 22) ------------------------------
+// g) "brazo de barrera levantado con circuito de vía ocupado". Con PANDA
+// principal eso es lo normal para un tren lento atribuido, así que la alarma
+// se redefine como "el brazo no sigue la regla del controlador": hay pedido
+// de cierre (de PANDA o, sin PANDA operativo, del circuito) y el brazo está
+// arriba o subiendo por más de este tiempo. Necesita la posición del brazo:
+// en el prototipo la da la maqueta, en el producto la detección de posición
+// que el punto 22 e) ya exige.
+constexpr uint32_t kAlarmBarrierMs = 1000;
+// f) circuito de vía ocupado por más de 10 minutos. No cambia con PANDA.
+constexpr uint32_t kAlarmTrackLongMs = 600000;
 
 // Tipo de buzzer en GPIO 48. Pasivo (sin oscilador interno): se maneja con PWM
 // a kBeepHz. Activo (trae su oscilador, suena con tensión continua, el más
@@ -389,9 +443,10 @@ constexpr bool kBuzzerIsActive = false;
 // 3 manejan el servo y las dos luces alternadas. En false, el 21 y el 38 son
 // los relés "PANDA libre" y "PANDA operativo" hacia un controlador externo.
 constexpr bool kBarrierOnBoard = true;
-// Tiempos de la maqueta. La bajada está dentro de los 5 a 10 s del pliego.
+// Tiempos de la maqueta. La bajada está dentro de los 5 a 10 s del pliego. La
+// subida es la que usa PANDA para el sector de aproximación (kArmUpS).
 constexpr float kModelArmDownS = 6.0f;
-constexpr float kModelArmUpS = 3.0f;
+constexpr float kModelArmUpS = kArmUpS;
 constexpr uint32_t kServoUpUs = 1000;     // Brazo vertical (abierto)
 constexpr uint32_t kServoDownUs = 2000;   // Brazo horizontal (cerrado)
 constexpr uint32_t kBarrierLightHalfMs = 500;  // SETOP 8.6.5: alternan cada 0,5 s

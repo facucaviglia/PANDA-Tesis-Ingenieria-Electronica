@@ -147,6 +147,8 @@ enum class NoteCode : uint32_t {
   TrackExplained = 19, // El circuito se ocupó y PANDA lo atribuyó a un tren. value = id
   TrackUnexplained = 20, // El circuito quedó ocupado sin tren PANDA que lo explique. value = id o 0
   DataInconsistent = 21, // Plausibilidad: dato del tren imposible. value = id << 8 | causa (1 pos, 2 vel, 3 acel)
+  AlarmBarrier = 22,     // Anexo XII 22 g) redefinida: el brazo no sigue el pedido de cierre. value = 1 empieza, 0 termina
+  AlarmTrackLong = 23,   // Anexo XII 22 f): circuito ocupado más de 10 min. value = 1 empieza, 0 termina
 };
 
 struct LogEvent {
