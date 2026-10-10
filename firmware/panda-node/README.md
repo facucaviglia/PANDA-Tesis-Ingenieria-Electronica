@@ -10,7 +10,7 @@ Un solo código con varios roles, elegidos al compilar.
 | 3 | `cruce`: PANDA principal con el ciclo de ADIF, atribución del circuito de vía, plausibilidad, OTRO TREN, maqueta de barrera, simulador | **Lista** |
 | 4 | IMU: plausibilidad del GNSS contra la IMU, quieto o en marcha, huecos cortos | Pendiente |
 
-Nada de esto corrió todavía en una placa: compila y la lógica está verificada contra el modelo en Python.
+Nada de esto corrió todavía en una placa. La lógica está verificada contra el modelo en Python y con la prueba en PC (`test_pc`). La versión 0.4.1 (revisión legal contra el Anexo XII y el SETOP) todavía no se compiló con PlatformIO: el primer paso de la sección 3 es justamente eso.
 
 ## 1. Qué hace falta
 
@@ -42,19 +42,62 @@ Con `panda-itba-tren` y `panda-itba-tren-lora` en el mismo mapa se ve el enlace 
 
 Para verlo en el celular: app **Traccar Manager** con servidor `https://demo.traccar.org`. El demo es para pruebas y lo pueden borrar. El prefijo `panda-itba` se cambia en `TRACCAR_ID_PREFIX`.
 
-## 3. Compilar y subir
+## 3. Primera puesta en marcha: compilar y cargar las dos placas
 
-1. Abrí la carpeta `firmware/panda-node` en VS Code (la carpeta, no el repo entero).
-2. En la barra inferior de PlatformIO elegí el entorno: **env:tren**, **env:cruce** o **env:registrador**.
-3. Conectá la placa por USB-C y tocá **Upload** (flecha).
-4. Si no la detecta: mantené apretado **BOOT**, tocá **RST**, soltá BOOT y volvé a subir.
-5. Abrí el **Serial Monitor** a 115200 baud. Escribí `h` y Enter para ver los comandos.
+El código es uno solo. Lo que cambia entre placas es el **entorno** que se elige al compilar:
 
-Desde la terminal:
+| Placa | Entorno | Qué hace |
+|---|---|---|
+| **NC**, nodo cruce | `cruce` | Recibe los beacons, decide y maneja la maqueta, la señal peatonal y el sonido |
+| **NT**, nodo tren | `tren` | Transmite su posición, velocidad y aceleración 10 veces por segundo |
+| (otra) | `registrador` | Solo graba GNSS e IMU en la microSD, para los viajes |
+
+No hace falta configurar nada antes: `secrets.h` (Wi-Fi) se usa recién cuando se active la telemetría, y sin él compila con `secrets_example.h`. Tampoco hace falta tener los LEDs, el buzzer ni el servo conectados: esas salidas quedan al aire y el resto funciona igual.
+
+### Paso 1. Compilar sin placa
+
+1. Abrí la carpeta `firmware/panda-node` en VS Code (la carpeta, no el repo entero). La primera vez PlatformIO descarga la plataforma del ESP32 y las librerías: tarda varios minutos.
+2. En la barra inferior de PlatformIO elegí **env:cruce** y tocá **Build** (el tilde). Repetí con **env:tren**.
+3. Las dos tienen que terminar en `SUCCESS`. Si alguna da error, copiá el mensaje completo (desde la primera línea que dice `error`) y pasalo para corregirlo.
+
+Desde la terminal es lo mismo:
 
 ```bash
-pio run -e tren -t upload -t monitor
+pio run -e cruce
+pio run -e tren
 ```
+
+### Paso 2. Cargar cada placa
+
+**Poné la antena en cada placa antes de conectarla.** El nodo tren transmite apenas arranca y el SX1262 se puede dañar sin antena.
+
+1. Conectá **solo la placa NC** por USB-C (cable de datos, no solo de carga).
+2. Elegí **env:cruce** y tocá **Upload** (la flecha).
+3. Desconectala, conectá **la placa NT**, elegí **env:tren** y tocá **Upload**.
+4. Si no la detecta o no carga: mantené apretado **BOOT**, tocá **RST**, soltá BOOT y volvé a subir.
+
+Con las dos placas conectadas a la vez hay que decirle a cuál va cada una. Fijate los puertos con `pio device list` (en Windows son `COM5`, `COM6`, etc.):
+
+```bash
+pio run -e cruce -t upload --upload-port COM5
+pio run -e tren  -t upload --upload-port COM6
+```
+
+Conviene marcar cada placa con un papelito "NC" y "NT" para no confundirlas.
+
+### Paso 3. Ver qué hace cada una
+
+Abrí el **Serial Monitor** a 115200 baud de cada placa (o `pio device monitor -p COM5 -b 115200`). Escribí `h` y Enter para ver los comandos, `i` para ver la información del nodo.
+
+Al arrancar, cada placa imprime `PANDA nodo CRUCE  fw 0.4.1-panda-principal` (o `TREN`) y la pantalla muestra **PANDA CRUCE** o **PANDA TREN**. Si una placa muestra el rol equivocado, se cargó con el entorno equivocado: volvé al paso 2.
+
+Después seguí con la prueba de banco del enlace (sección 4) y, para la barrera con una sola placa, con el simulador (sección 4 quater).
+
+### Si algo falla, qué pasar
+
+- **No compila:** el mensaje de error completo del paso 1.
+- **Carga pero no arranca o se reinicia:** lo que imprime el Serial Monitor desde el arranque (incluido lo que diga `Guru Meditation` o `rst:` si aparece).
+- **Arranca pero no se ven entre sí:** la salida del comando `i` en las dos placas y una línea de estado de cada una.
 
 ## 4. Prueba de banco del enlace
 
